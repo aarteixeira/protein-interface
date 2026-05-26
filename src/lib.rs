@@ -144,6 +144,24 @@ fn compute_sasa(
     ))
 }
 
+/// Return atoms that have no entry in the embedded SASA/SC radius table.
+#[pyfunction]
+fn unknown_sasa_radius_atoms(
+    atom_names: Vec<String>,
+    residue_names: Vec<String>,
+) -> PyResult<Vec<(usize, String, String)>> {
+    if atom_names.len() != residue_names.len() {
+        return Err(PyValueError::new_err(
+            "atom_names and residue_names must have the same length",
+        ));
+    }
+    Ok(sasa::unknown_radius_atoms(
+        &atom_names,
+        &residue_names,
+        &embedded_atomic_radii(),
+    ))
+}
+
 /// Count cross-interface hydrogen bonds using a distance-only criterion.
 ///
 /// Donors and acceptors are classified by (residue, atom) name; a pair is
@@ -274,6 +292,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ScResult>()?;
     m.add_function(wrap_pyfunction!(compute_sc, m)?)?;
     m.add_function(wrap_pyfunction!(compute_sasa, m)?)?;
+    m.add_function(wrap_pyfunction!(unknown_sasa_radius_atoms, m)?)?;
     m.add_function(wrap_pyfunction!(compute_sasa_batch, m)?)?;
     m.add_function(wrap_pyfunction!(count_hbonds, m)?)?;
     m.add_function(wrap_pyfunction!(count_salt_bridges, m)?)?;

@@ -158,26 +158,98 @@ def test_analyze_combines_metrics(nb_ag):
     assert res.hbonds >= 0
 
 
+def test_analyze_rejects_empty_atom_group():
+    from protein_interface import AtomArrays
+    empty = AtomArrays([], [], [], [])
+    one = AtomArrays([[0.0, 0.0, 0.0]], ["CA"], ["ALA"], [("A", 1)])
+    with pytest.raises(ValueError, match="at least one atom"):
+        analyze(empty, one, include_sc=False)
+
+
+def test_analyze_strict_rejects_unknown_sasa_radius():
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["XX"], ["ZZZ"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CA"], ["ALA"], [("B", 1)])
+    with pytest.raises(ValueError, match="no SASA radius"):
+        analyze(a, b, include_sc=False)
+
+
+def test_analyze_permissive_allows_unknown_sasa_radius():
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["XX"], ["ZZZ"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CA"], ["ALA"], [("B", 1)])
+    res = analyze(a, b, include_sc=False, strict=False)
+    assert res.dsasa >= 0.0
+
+
+def test_analyze_strict_propagates_sc_failure(monkeypatch):
+    from protein_interface import AtomArrays
+    import protein_interface.interface as iface
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic SC failure")
+
+    monkeypatch.setattr(iface, "compute_sc", boom)
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CA"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CA"], ["ALA"], [("B", 1)])
+    with pytest.raises(ValueError, match="synthetic SC failure"):
+        analyze(a, b)
+
+
+def test_analyze_permissive_sc_failure_returns_nan(monkeypatch):
+    from protein_interface import AtomArrays
+    import protein_interface.interface as iface
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic SC failure")
+
+    monkeypatch.setattr(iface, "compute_sc", boom)
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CA"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CA"], ["ALA"], [("B", 1)])
+    res = analyze(a, b, strict=False)
+    assert math.isnan(res.sc)
+
+
 # ── New-metric unit tests ────────────────────────────────────────────────────
 
 def test_salt_bridges_simple_pair():
-    from protein_interface import count_salt_bridges
-    n = count_salt_bridges(
-        [[0.0, 0.0, 0.0]], ["OD1"], ["ASP"],
-        [[3.5, 0.0, 0.0]], ["NZ"], ["LYS"],
-        4.0,
+    from protein_interface import AtomArrays, salt_bridges
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["OD1"], ["ASP"], [("A", 1)])
+    b = AtomArrays([[3.5, 0.0, 0.0]], ["NZ"], ["LYS"], [("B", 1)])
+    assert salt_bridges(a, b) == 1
+
+
+def test_salt_bridges_deduplicates_residue_pair():
+    from protein_interface import AtomArrays, salt_bridges
+    a = AtomArrays(
+        [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        ["OD1", "OD2"], ["ASP", "ASP"],
+        [("A", 1), ("A", 1)],
     )
-    assert n == 1
+    b = AtomArrays([[0.5, 0.5, 0.0]], ["NZ"], ["LYS"], [("B", 1)])
+    assert salt_bridges(a, b) == 1
+
+
+def test_salt_bridges_counts_distinct_residue_pairs():
+    from protein_interface import AtomArrays, salt_bridges
+    a = AtomArrays(
+        [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+        ["OD1", "OE1"], ["ASP", "GLU"],
+        [("A", 1), ("A", 2)],
+    )
+    b = AtomArrays(
+        [[3.0, 0.0, 0.0], [13.0, 0.0, 0.0]],
+        ["NZ", "NH1"], ["LYS", "ARG"],
+        [("B", 1), ("B", 2)],
+    )
+    assert salt_bridges(a, b) == 2
 
 
 def test_salt_bridges_excludes_non_charged():
-    from protein_interface import count_salt_bridges
-    n = count_salt_bridges(
-        [[0.0, 0.0, 0.0]], ["O"], ["ALA"],   # backbone O — not a side-chain anion
-        [[3.5, 0.0, 0.0]], ["NZ"], ["LYS"],
-        4.0,
-    )
-    assert n == 0
+    from protein_interface import AtomArrays, salt_bridges
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["O"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[3.5, 0.0, 0.0]], ["NZ"], ["LYS"], [("B", 1)])
+    assert salt_bridges(a, b) == 0
 
 
 def test_bsa_breakdown_sums_to_dsasa(nb_ag):
@@ -196,6 +268,27 @@ def test_per_residue_dsasa_consistent_with_total(nb_ag):
     per_res = per_residue_dsasa(a, b, n_points=92)
     d_total = delta_sasa(a, b, n_points=92)
     assert abs(sum(per_res.values()) - d_total) < 1.0
+
+
+def test_per_residue_dsasa_side_qualified_keys_do_not_collide():
+    from protein_interface import AtomArrays, per_residue_dsasa
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["GLY"], [("A", 1)])
+    per_res = per_residue_dsasa(a, b, n_points=92)
+    assert set(per_res) == {("a", "A", 1, ""), ("b", "A", 1, "")}
+
+
+def test_residue_ids_preserve_insertion_codes():
+    from protein_interface import AtomArrays, per_residue_dsasa
+    a = AtomArrays(
+        [[0.0, 0.0, 0.0], [8.0, 0.0, 0.0]],
+        ["CB", "CB"], ["ALA", "ALA"],
+        [("A", 10, "A"), ("A", 10, "B")],
+    )
+    b = AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], [("B", 1)])
+    per_res = per_residue_dsasa(a, b, n_points=92)
+    assert ("a", "A", 10, "A") in per_res
+    assert ("a", "A", 10, "B") in per_res
 
 
 def test_hotspot_residues_threshold():

@@ -153,8 +153,9 @@ also callable on their own (e.g. `sasa(a)`, `pi_pi_contacts(a, b)`).
 
 ### Metrics
 
-All distances are in Å. Atoms with no entry in the sc-rs radius table are
-silently skipped (matches `compute_sc`).
+All distances are in Å. With the default `strict=True`, atoms with no entry in
+the sc-rs radius table raise a clear error; with `strict=False`, they follow
+the low-level kernel behavior and contribute 0 SASA.
 
 | Field | Definition |
 |---|---|
@@ -165,7 +166,7 @@ silently skipped (matches `compute_sc`).
 | `hydrophobic_fraction` | `bhsa / dsasa`. |
 | `hbonds` | Cross-interface H-bond count. Donor (any backbone N except Pro, plus polar side-chain N/O of Ser/Thr/Tyr/Asn/Gln/Lys/Arg/His/Trp) and acceptor (backbone O/OXT, plus side-chain O/N of Asp/Glu/Asn/Gln/Ser/Thr/Tyr/His) atoms within 3.5 Å. Distance-only; H positions and angles are not used. |
 | `hbond_density` | `100 × hbonds / dsasa`. Useful for normalising across interfaces of different sizes. |
-| `salt_bridges` | Cross-interface anion–cation pairs within 4.0 Å (Barlow & Thornton 1983). Anions: Asp OD\*, Glu OE\*. Cations: Lys NZ, Arg NE/NH\*, His ND1/NE2. |
+| `salt_bridges` | Cross-interface acidic/basic residue pairs with at least one anion–cation atom pair within 4.0 Å (Barlow & Thornton 1983). Anions: Asp OD\*, Glu OE\*. Cations: Lys NZ, Arg NE/NH\*, His ND1/NE2. Multiple atom contacts between the same residue pair count once. |
 | `pi_pi` | Aromatic ring centroid pairs (PHE/TYR/TRP/HIS) on opposite sides within 7.0 Å and with absolute angle between ring normals ≤ 90° (accepts face-to-face and T-shaped; tighten with `angle_cutoff_deg`). Ring atoms follow McGaughey et al. 1998. |
 | `cation_pi` | Lys NZ or Arg CZ within 6.0 Å of an aromatic centroid on the opposite chain (Gallivan & Dougherty 1999). |
 | `buried_unsat_polar` | Polar atom (donor or acceptor) whose SASA in the complex is below 1.0 Å², whose dSASA is above 1.0 Å² (i.e. binding caused the burial), and that has no complementary polar partner within 3.5 Å on the opposite chain. Geometric count of buried unsatisfied polars; intra-chain partners are not considered. |
@@ -198,8 +199,14 @@ consistent.
 
 ### Defaults and parameters
 
-`analyze()` accepts every threshold as a keyword argument. Defaults match
-common literature values:
+`analyze()` accepts every threshold as a keyword argument. By default it runs
+with `strict=True`: empty atom groups, malformed arrays, unknown SASA/SC radii,
+and shape-complementarity failures raise clear errors instead of being silently
+converted to partial metrics. Pass `strict=False` only when intentionally
+screening permissively; in that mode unknown-radius atoms follow the low-level
+Rust kernel behavior and contribute 0 SASA, and SC failures return `NaN`.
+
+Defaults match common literature values:
 
 | Parameter | Default | Source |
 |---|---|---|

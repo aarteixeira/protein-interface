@@ -14,13 +14,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+import math
 
 import numpy as np
 
 if TYPE_CHECKING:
     from Bio.PDB.Structure import Structure as BioStructure
 
-from protein_interface._core import ScResult, compute_sc
+from protein_interface._core import ScResult, compute_sc, unknown_sasa_radius_atoms
 
 
 # ── Hydrogen detection (mirrors sc-rs bin/sc.rs) ────────────────────────────
@@ -106,6 +107,25 @@ def _load_structure(path: str | Path):
     return parser.get_structure(path.stem, str(path))
 
 
+def _validate_sc_arrays(coords, atom_names, residue_names, label: str, strict: bool) -> None:
+    n = len(coords)
+    if strict and n == 0:
+        raise ValueError(f"{label} must contain at least one atom")
+    if len(atom_names) != n or len(residue_names) != n:
+        raise ValueError(f"{label} coords, atom_names, and residue_names must have the same length")
+    for i, coord in enumerate(coords):
+        if len(coord) != 3:
+            raise ValueError(f"{label} coord {i} must have exactly 3 values")
+        if not all(math.isfinite(float(x)) for x in coord):
+            raise ValueError(f"{label} coord {i} contains a non-finite value")
+    if strict:
+        unknown = unknown_sasa_radius_atoms(atom_names, residue_names)
+        if unknown:
+            examples = ", ".join(f"{res}:{atom}@{idx}" for idx, res, atom in unknown[:5])
+            extra = "" if len(unknown) <= 5 else f", ... ({len(unknown)} total)"
+            raise ValueError(f"{label} contains atoms with no SC/SASA radius: {examples}{extra}")
+
+
 # ── Public biopython-based API ───────────────────────────────────────────────
 
 def from_structure(
@@ -116,6 +136,7 @@ def from_structure(
     include_hetatm: bool = False,
     include_hydrogens: bool = False,
     parallel: bool = True,
+    strict: bool = True,
 ) -> ScResult:
     """Compute SC from a biopython Structure object.
 
@@ -142,6 +163,8 @@ def from_structure(
     coords_a, names_a, res_a = _extract_atom_arrays(m, chains_a, include_hetatm, include_hydrogens)
     coords_b, names_b, res_b = _extract_atom_arrays(m, chains_b, include_hetatm, include_hydrogens)
 
+    _validate_sc_arrays(coords_a, names_a, res_a, "chains_a", strict)
+    _validate_sc_arrays(coords_b, names_b, res_b, "chains_b", strict)
     return compute_sc(coords_a, names_a, res_a, coords_b, names_b, res_b, parallel)
 
 
@@ -153,6 +176,7 @@ def from_pdb(
     include_hetatm: bool = False,
     include_hydrogens: bool = False,
     parallel: bool = True,
+    strict: bool = True,
 ) -> ScResult:
     """Compute SC from a PDB or mmCIF file.
 
@@ -174,6 +198,7 @@ def from_pdb(
         include_hetatm=include_hetatm,
         include_hydrogens=include_hydrogens,
         parallel=parallel,
+        strict=strict,
     )
 
 
@@ -257,6 +282,7 @@ def from_boltzgen_structure(
     chains_b: list[str] | None = None,
     include_hydrogens: bool = False,
     parallel: bool = True,
+    strict: bool = True,
 ) -> ScResult:
     """Compute SC from an in-memory BoltzGen Structure object.
 
@@ -287,6 +313,8 @@ def from_boltzgen_structure(
     coords_a, names_a, res_a = _extract_boltzgen_chains(structure, chains_a, include_hydrogens)
     coords_b, names_b, res_b = _extract_boltzgen_chains(structure, chains_b, include_hydrogens)
 
+    _validate_sc_arrays(coords_a, names_a, res_a, "chains_a", strict)
+    _validate_sc_arrays(coords_b, names_b, res_b, "chains_b", strict)
     return compute_sc(coords_a, names_a, res_a, coords_b, names_b, res_b, parallel)
 
 
@@ -297,6 +325,7 @@ def from_biotite(
     include_hetatm: bool = False,
     include_hydrogens: bool = False,
     parallel: bool = True,
+    strict: bool = True,
 ) -> ScResult:
     """Compute SC from a biotite AtomArray or AtomArrayStack (first model used).
 
@@ -355,6 +384,8 @@ def from_biotite(
 
     coords_a, names_a, res_a = _extract(chains_a)
     coords_b, names_b, res_b = _extract(chains_b)
+    _validate_sc_arrays(coords_a, names_a, res_a, "chains_a", strict)
+    _validate_sc_arrays(coords_b, names_b, res_b, "chains_b", strict)
     return compute_sc(coords_a, names_a, res_a, coords_b, names_b, res_b, parallel)
 
 
@@ -364,6 +395,7 @@ def from_boltzgen_refold(
     chains_b: list[str] | None = None,
     include_hydrogens: bool = False,
     parallel: bool = True,
+    strict: bool = True,
 ) -> ScResult:
     """Compute SC from a BoltzGen refold_cif/*.cif file using biotite.
 
@@ -399,4 +431,5 @@ def from_boltzgen_refold(
         include_hetatm=False,
         include_hydrogens=include_hydrogens,
         parallel=parallel,
+        strict=strict,
     )

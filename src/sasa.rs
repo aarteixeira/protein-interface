@@ -30,6 +30,21 @@ fn lookup_radius(table: &[AtomRadius], residue: &str, atom: &str) -> Option<f64>
     None
 }
 
+/// Return atoms whose (residue, atom) pair has no radius table entry.
+pub fn unknown_radius_atoms(
+    atom_names: &[String],
+    residue_names: &[String],
+    table: &[AtomRadius],
+) -> Vec<(usize, String, String)> {
+    let mut out = Vec::new();
+    for (i, (atom, residue)) in atom_names.iter().zip(residue_names.iter()).enumerate() {
+        if lookup_radius(table, residue, atom).is_none() {
+            out.push((i, residue.clone(), atom.clone()));
+        }
+    }
+    out
+}
+
 /// Compute per-atom SASA in Å². Atoms with no radius entry get SASA = 0.0.
 /// Loads the radii table on every call; for batch use prefer
 /// [`compute_with_radii`] with a shared table.

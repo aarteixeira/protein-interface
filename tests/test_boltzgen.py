@@ -255,12 +255,14 @@ def test_from_boltzgen_structure_determinism():
 try:
     import biotite.structure as _biotite_struc
     _HAS_BIOTITE = True
-except ImportError:
+    _BIOTITE_SKIP_REASON = ""
+except Exception as exc:
     _HAS_BIOTITE = False
+    _BIOTITE_SKIP_REASON = f"biotite unavailable or incompatible: {exc}"
 
 requires_biotite = pytest.mark.skipif(
     not _HAS_BIOTITE,
-    reason="biotite not installed; install with `pip install biotite`",
+    reason=_BIOTITE_SKIP_REASON or "biotite not installed; install with `pip install biotite`",
 )
 
 
