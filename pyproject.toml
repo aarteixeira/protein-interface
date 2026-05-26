@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
+[project]
+name = "protein-interface"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "biopython>=1.83"]
+license = {text = "MIT"}
+description = "Fast, geometry-based interface analysis for protein-protein complexes (SASA, dSASA, H-bonds, salt bridges, π-π, cation-π, buried unsats, shape complementarity, and more)"
+
+[tool.maturin]
+features = ["pyo3/extension-module", "pyo3/abi3-py310"]
+python-source = "python"
+module-name = "protein_interface._core"
+
+[project.urls]
+Homepage = "https://github.com/aarteixeira/protein-interface"
+Repository = "https://github.com/aarteixeira/protein-interface"
+"Bug Tracker" = "https://github.com/aarteixeira/protein-interface/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
