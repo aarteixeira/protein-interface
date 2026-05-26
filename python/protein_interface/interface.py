@@ -728,9 +728,9 @@ def buried_unsat_polar(
         • no complementary polar partner exists within `hbond_cutoff` Å on the
           opposite chain.
 
-    This is a geometry-only proxy for Rosetta's `delta_unsatHbonds`. Intra-chain
-    H-bond partners are not considered — if an atom were satisfied intramolecularly
-    in the unbound state, it would not normally meet the burial-gain criterion.
+    This is a geometric count of buried unsatisfied polars. Intra-chain H-bond
+    partners are not considered — if an atom were satisfied intramolecularly in
+    the unbound state, it would not normally meet the burial-gain criterion.
     """
     combined, sasa_c, sasa_s = _per_atom_dsasa(a, b, probe_radius, n_points)
     d = sasa_s - sasa_c

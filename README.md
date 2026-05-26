@@ -132,11 +132,10 @@ For the full metric suite, load via `load_atoms()` and call `analyze()` (or
 
 ## Interface analysis
 
-In addition to the Lawrence-Colman SC value, the package computes a set of
-geometry-based metrics inspired by Rosetta's `InterfaceAnalyzer`. No energy
-function is used — every metric is derived from atom coordinates and
-identities, so results depend only on the input structure (not on any
-force field choice).
+In addition to the Lawrence-Colman SC value, the package computes a suite of
+geometry-based interface metrics. No energy function is used — every metric is
+derived from atom coordinates and identities, so results depend only on the
+input structure (not on any force-field choice).
 
 ### Quick start
 
@@ -169,7 +168,7 @@ silently skipped (matches `compute_sc`).
 | `salt_bridges` | Cross-interface anion–cation pairs within 4.0 Å (Barlow & Thornton 1983). Anions: Asp OD\*, Glu OE\*. Cations: Lys NZ, Arg NE/NH\*, His ND1/NE2. |
 | `pi_pi` | Aromatic ring centroid pairs (PHE/TYR/TRP/HIS) on opposite sides within 7.0 Å and with absolute angle between ring normals ≤ 90° (accepts face-to-face and T-shaped; tighten with `angle_cutoff_deg`). Ring atoms follow McGaughey et al. 1998. |
 | `cation_pi` | Lys NZ or Arg CZ within 6.0 Å of an aromatic centroid on the opposite chain (Gallivan & Dougherty 1999). |
-| `buried_unsat_polar` | Polar atom (donor or acceptor) whose SASA in the complex is below 1.0 Å², whose dSASA is above 1.0 Å² (i.e. binding caused the burial), and that has no complementary polar partner within 3.5 Å on the opposite chain. Geometry-only proxy for Rosetta's `delta_unsatHbonds`; intra-chain partners are not considered. |
+| `buried_unsat_polar` | Polar atom (donor or acceptor) whose SASA in the complex is below 1.0 Å², whose dSASA is above 1.0 Å² (i.e. binding caused the burial), and that has no complementary polar partner within 3.5 Å on the opposite chain. Geometric count of buried unsatisfied polars; intra-chain partners are not considered. |
 | `planarity_rmsd` | RMS perpendicular distance of interface atoms (per-atom dSASA ≥ 0.5 Å²) from their best-fit plane. Smaller = flatter interface. |
 | `elongation` | σ1 / σ2 from PCA on interface-atom coordinates. ≥ 1.0; larger = more elongated patch. |
 | `planarity_ratio` | σ3 / σ2 from the same PCA. ≤ 1; smaller = flatter. |
@@ -264,8 +263,8 @@ single process, Rayon across cores). Pipelining file I/O via
 
 These would require an energy function and are deliberately out of scope:
 
-- Rosetta `dG_separated`, `dG_cross` — full force-field binding energies
-- `packstat` — RosettaHoles packing density
+- Force-field binding energies (require an energy function)
+- Packing-density / void-volume scores (require a Connolly surface)
 - Solvation-aware H-bond satisfaction (we use distance only)
 - Secondary-structure-resolved metrics (no DSSP)
 
@@ -379,7 +378,7 @@ otherwise-confident interface usually marks a bad contact.
 
 ## What this is NOT
 
-- **Not a force field.** Every metric is purely geometric. Rosetta-style binding energies (`dG_separated`, `packstat`, etc.) require an energy function and are deliberately out of scope.
+- **Not a force field.** Every metric is purely geometric. Binding-energy and packing-density scores require an energy function or a Connolly surface and are deliberately out of scope.
 - **Not a reimplementation of SC.** Shape complementarity is delegated to `sc-rs`. If `compute_sc` returns a surprising value, verify against the upstream `sc-rs` CLI first.
 - **Not a design filter on its own.** Threshold selection, chain naming, and ranking belong in the consuming pipeline. `analyze()` gives you the numbers; you decide what counts as good.
 
