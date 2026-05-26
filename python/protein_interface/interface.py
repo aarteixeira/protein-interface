@@ -64,6 +64,61 @@ RESIDUE_CHARGE: dict[str, int] = {
     "LYS": +1, "ARG": +1,
 }
 
+# PRODIGY residue classification (Vangone & Bonvin 2015). Mirrors the two
+# tables in prodigy_prot.modules.aa_properties exactly — they are different
+# for IC counting vs NIS counting. CYS, TYR, TRP move between "apolar" (IC
+# table) and "polar" (NIS table); HIS moves between "charged" (IC) and
+# "polar" (NIS).
+PRODIGY_IC_CLASS: dict[str, str] = {
+    "ALA": "A", "CYS": "A", "GLU": "C", "ASP": "C", "GLY": "A",
+    "PHE": "A", "ILE": "A", "HIS": "C", "LYS": "C", "MET": "A",
+    "LEU": "A", "ASN": "P", "GLN": "P", "PRO": "A", "SER": "P",
+    "ARG": "C", "THR": "P", "TRP": "A", "VAL": "A", "TYR": "A",
+}
+PRODIGY_NIS_CLASS: dict[str, str] = {
+    "ALA": "A", "CYS": "P", "GLU": "C", "ASP": "C", "GLY": "A",
+    "PHE": "A", "ILE": "A", "HIS": "P", "LYS": "C", "MET": "A",
+    "LEU": "A", "ASN": "P", "GLN": "P", "PRO": "A", "SER": "P",
+    "ARG": "C", "THR": "P", "TRP": "P", "VAL": "A", "TYR": "P",
+}
+
+# Reference SASA (Å²) per residue type in a Gly-X-Gly tripeptide — used for
+# relative-SASA (rSASA) computation. Values from Tien et al. 2013 ("empirical"
+# column), which is the modern alternative to Miller 1987 / NACCESS defaults
+# and is what PRODIGY ships in recent versions.
+REFERENCE_SASA: dict[str, float] = {
+    "ALA": 129, "ARG": 274, "ASN": 195, "ASP": 193, "CYS": 167,
+    "GLN": 225, "GLU": 223, "GLY": 104, "HIS": 224, "ILE": 197,
+    "LEU": 201, "LYS": 236, "MET": 224, "PHE": 240, "PRO": 159,
+    "SER": 155, "THR": 172, "TRP": 285, "TYR": 263, "VAL": 174,
+}
+
+# Trained coefficients of the PRODIGY ΔG_bind predictor (Vangone & Bonvin 2015,
+# eLife 4:e07454). Counts are residue-residue intermolecular contacts within
+# 5.5 Å (any heavy atom). NIS percentages are over surface residues (rel-SASA
+# > 5 %) outside the interface in the bound complex.
+PRODIGY_COEFFS = {
+    "CC":          -0.09459,   # charged-charged ICs
+    "AC":          -0.10007,   # apolar-charged ICs   (called "CA" upstream)
+    "PP":           0.19577,   # polar-polar ICs
+    "AP":          -0.22671,   # apolar-polar ICs     (called "PA" upstream)
+    "NIS_apolar":   0.18681,   # % apolar in NIS
+    "NIS_charged":  0.13810,   # % charged in NIS
+    "intercept":  -15.9433,
+}
+PRODIGY_IC_CUTOFF = 5.5         # Å
+PRODIGY_NIS_RSASA_CUTOFF = 5.0  # % rel-SASA threshold for "surface"
+
+
+def _prodigy_ic_class(rname: str) -> str | None:
+    """IC-table polarity: 'A' / 'P' / 'C', or None for non-standard residues."""
+    return PRODIGY_IC_CLASS.get(rname)
+
+
+def _prodigy_nis_class(rname: str) -> str | None:
+    """NIS-table polarity: 'A' / 'P' / 'C', or None for non-standard residues."""
+    return PRODIGY_NIS_CLASS.get(rname)
+
 # Six-membered ring atoms used for the centroid + normal of each aromatic residue.
 # TRP uses the six-membered benzene ring of the indole; HIS uses its five-ring.
 RING_ATOMS: dict[str, tuple[str, ...]] = {
@@ -157,6 +212,7 @@ class InterfaceResult:
     charge_complementarity: float     # −charge_a × charge_b; positive = opposing signs
     mean_bfactor_interface: float     # mean B-factor (= pLDDT) over interface atoms; NaN if absent
     min_bfactor_interface: float      # min B-factor over interface atoms; NaN if absent
+    prodigy_dg: float                 # predicted binding ΔG (kcal/mol), Vangone & Bonvin 2015
     hotspots_a: list[tuple[str, int]] = field(default_factory=list)
     hotspots_b: list[tuple[str, int]] = field(default_factory=list)
 
@@ -526,6 +582,166 @@ def charge_complementarity(
         "complementarity": float(-qa * qb),
     }
 
+
+# ── PRODIGY ──────────────────────────────────────────────────────────────────
+
+def _ic_bins_from_contacts(
+    a: AtomArrays,
+    b: AtomArrays,
+    within: np.ndarray,
+) -> dict[str, int]:
+    """Tally cross-interface residue-residue contacts by polarity-pair class.
+
+    `within` is the (N_a, N_b) bool atom-pair mask (typically `d² ≤ 5.5²`).
+    A residue pair counts once even if many of its atoms contact.
+    """
+    pairs = np.argwhere(within)
+    if pairs.size == 0:
+        return {"CC": 0, "AC": 0, "AP": 0, "AA": 0, "PP": 0, "CP": 0}
+
+    res_pairs: set[tuple[tuple[str, int], tuple[str, int]]] = set()
+    for ai, bi in pairs:
+        res_pairs.add((a.residue_ids[ai], b.residue_ids[bi]))
+
+    res_name_a = {a.residue_ids[i]: a.residue_names[i] for i in range(len(a.coords))}
+    res_name_b = {b.residue_ids[i]: b.residue_names[i] for i in range(len(b.coords))}
+
+    bins = {"CC": 0, "AC": 0, "AP": 0, "AA": 0, "PP": 0, "CP": 0}
+    for ra, rb in res_pairs:
+        pa = _prodigy_ic_class(res_name_a[ra])
+        pb = _prodigy_ic_class(res_name_b[rb])
+        if pa is None or pb is None:
+            continue
+        key = "".join(sorted([pa, pb]))  # AA, AC, AP, CC, CP, PP
+        if key in bins:
+            bins[key] += 1
+    return bins
+
+
+def prodigy_ics(
+    a: AtomArrays,
+    b: AtomArrays,
+    cutoff: float = PRODIGY_IC_CUTOFF,
+) -> dict[str, int]:
+    """Cross-interface residue-residue contacts by polarity class.
+
+    A residue pair is counted as a contact when any heavy atom of A is within
+    `cutoff` Å of any heavy atom of B (default 5.5 Å, the PRODIGY convention).
+    Returns a dict with keys CC, AC, AP, AA, PP, CP and `total`.
+    Non-standard residues are skipped.
+    """
+    if not a.coords or not b.coords:
+        return {"CC": 0, "AC": 0, "AP": 0, "AA": 0, "PP": 0, "CP": 0, "total": 0}
+    A = np.asarray(a.coords)
+    B = np.asarray(b.coords)
+    sq_a = (A * A).sum(axis=1)
+    sq_b = (B * B).sum(axis=1)
+    d2 = sq_a[:, None] + sq_b[None, :] - 2.0 * (A @ B.T)
+    within = d2 <= cutoff * cutoff
+    bins = _ic_bins_from_contacts(a, b, within)
+    bins["total"] = sum(bins.values())
+    return bins
+
+
+def _nis_from_arrays(
+    combined: AtomArrays,
+    sasa_complex: np.ndarray,
+    interface_rids: set[tuple[str, int]],
+    rsasa_cutoff: float = PRODIGY_NIS_RSASA_CUTOFF,
+) -> dict[str, float]:
+    """Compute % apolar / polar / charged in the non-interacting surface.
+
+    NIS is defined (per PRODIGY) as residues with relative SASA > 5 % in the
+    bound complex AND not at the interface. Residue rSASA = sum of per-atom
+    complex SASA divided by the Tien et al. 2013 reference for that residue.
+    """
+    per_res: dict[tuple[str, int], float] = {}
+    per_res_name: dict[tuple[str, int], str] = {}
+    for i, rid in enumerate(combined.residue_ids):
+        per_res[rid] = per_res.get(rid, 0.0) + float(sasa_complex[i])
+        per_res_name[rid] = combined.residue_names[i]
+
+    n_apolar = n_polar = n_charged = 0
+    for rid, s in per_res.items():
+        if rid in interface_rids:
+            continue
+        rname = per_res_name[rid]
+        ref = REFERENCE_SASA.get(rname)
+        if ref is None:
+            continue
+        if 100.0 * s / ref <= rsasa_cutoff:
+            continue
+        cls = _prodigy_nis_class(rname)
+        if cls == "A":
+            n_apolar += 1
+        elif cls == "P":
+            n_polar += 1
+        elif cls == "C":
+            n_charged += 1
+    total = n_apolar + n_polar + n_charged
+    if total == 0:
+        return {"apolar": 0.0, "polar": 0.0, "charged": 0.0, "n_residues": 0}
+    return {
+        "apolar":     100.0 * n_apolar / total,
+        "polar":      100.0 * n_polar / total,
+        "charged":    100.0 * n_charged / total,
+        "n_residues": total,
+    }
+
+
+def prodigy_nis(
+    a: AtomArrays,
+    b: AtomArrays,
+    probe_radius: float = 1.4,
+    n_points: int = 92,
+    cutoff: float = PRODIGY_IC_CUTOFF,
+    rsasa_cutoff: float = PRODIGY_NIS_RSASA_CUTOFF,
+) -> dict[str, float]:
+    """% apolar / polar / charged composition of the non-interacting surface.
+
+    Surface = relative SASA > `rsasa_cutoff` % in the bound complex (per-atom
+    SASA summed by residue, divided by the Tien et al. 2013 reference for
+    that residue type).
+    Interface = residues with any heavy atom within `cutoff` Å of the opposite
+    chain (5.5 Å is the PRODIGY convention).
+    """
+    combined, sasa_c, _ = _per_atom_dsasa(a, b, probe_radius, n_points)
+    int_a, int_b = interface_residues(a, b, cutoff)
+    return _nis_from_arrays(combined, sasa_c, int_a | int_b, rsasa_cutoff)
+
+
+def _prodigy_dg_from_parts(ics: dict[str, int], nis: dict[str, float]) -> float:
+    return (
+        PRODIGY_COEFFS["CC"]          * ics["CC"]
+        + PRODIGY_COEFFS["AC"]        * ics["AC"]
+        + PRODIGY_COEFFS["PP"]        * ics["PP"]
+        + PRODIGY_COEFFS["AP"]        * ics["AP"]
+        + PRODIGY_COEFFS["NIS_apolar"]  * nis["apolar"]
+        + PRODIGY_COEFFS["NIS_charged"] * nis["charged"]
+        + PRODIGY_COEFFS["intercept"]
+    )
+
+
+def prodigy(
+    a: AtomArrays,
+    b: AtomArrays,
+    probe_radius: float = 1.4,
+    n_points: int = 92,
+    cutoff: float = PRODIGY_IC_CUTOFF,
+    rsasa_cutoff: float = PRODIGY_NIS_RSASA_CUTOFF,
+) -> dict:
+    """Predicted binding free energy via the PRODIGY model (Vangone & Bonvin 2015).
+
+    Returns a dict with the intermediate counts (`ics`), NIS percentages
+    (`nis`), and the predicted `dg` in kcal/mol. More negative = tighter
+    predicted binding.
+    """
+    ics = prodigy_ics(a, b, cutoff)
+    nis = prodigy_nis(a, b, probe_radius, n_points, cutoff, rsasa_cutoff)
+    return {"ics": ics, "nis": nis, "dg": _prodigy_dg_from_parts(ics, nis)}
+
+
+# ── SASA helpers ─────────────────────────────────────────────────────────────
 
 def _per_atom_dsasa(a: AtomArrays, b: AtomArrays, probe_radius: float, n_points: int):
     """Return (combined, sasa_complex, sasa_separated) — used by metrics that
@@ -1051,6 +1267,17 @@ def _analyze_from_sasa(
         mean_bf = float("nan")
         min_bf = float("nan")
 
+    # PRODIGY ΔG — reuse the contact_d² matrix (at PRODIGY's 5.5 Å cutoff) and
+    # the per-atom complex SASA. Adds ~3 ms/call.
+    prodigy_within = contact_d2 <= PRODIGY_IC_CUTOFF * PRODIGY_IC_CUTOFF
+    prodigy_ic_bins = _ic_bins_from_contacts(a, b, prodigy_within)
+    prodigy_interface = (
+        {a.residue_ids[ai] for ai, _ in np.argwhere(prodigy_within)}
+        | {b.residue_ids[bi] for _, bi in np.argwhere(prodigy_within)}
+    )
+    prodigy_nis_parts = _nis_from_arrays(combined, sasa_c, prodigy_interface)
+    prodigy_dg_value = _prodigy_dg_from_parts(prodigy_ic_bins, prodigy_nis_parts)
+
     return InterfaceResult(
         sc=sc_value,
         dsasa=dsasa_total,
@@ -1085,6 +1312,7 @@ def _analyze_from_sasa(
         charge_complementarity=charge_compl,
         mean_bfactor_interface=mean_bf,
         min_bfactor_interface=min_bf,
+        prodigy_dg=prodigy_dg_value,
         hotspots_a=hs_a,
         hotspots_b=hs_b,
     )

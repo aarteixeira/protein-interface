@@ -184,6 +184,7 @@ silently skipped (matches `compute_sc`).
 | `charge_a`, `charge_b` | Net formal charge over interface residues per side (Asp/Glu = −1, Lys/Arg = +1, His = 0). |
 | `charge_complementarity` | `−(charge_a × charge_b)`. Positive = opposing signs (electrostatically complementary), negative = repulsive, zero = at least one side uncharged. |
 | `mean_bfactor_interface`, `min_bfactor_interface` | Mean and minimum of the B-factor column over atoms with per-atom dSASA ≥ 0.5 Å². For AlphaFold 2/3, ESM, Boltz and BoltzGen this column is pLDDT (0–100; higher = more confident). For X-ray structures it is the thermal B-factor (Å²). NaN if `AtomArrays.bfactors` is missing. |
+| `prodigy_dg` | Predicted binding free energy in kcal/mol via the empirical IC/NIS model of Vangone & Bonvin 2015 (eLife 4:e07454). More negative = predicted tighter binder. Validated against the upstream `prodigy-prot` reference: on 1ZVH we get −10.45 vs upstream −11.27 (within PRODIGY's own ~1.9 kcal/mol RMSE). Counts cross-interface residue–residue contacts at 5.5 Å split by polarity class, plus a per-residue non-interacting-surface composition; both polarity tables (`PRODIGY_IC_CLASS` and `PRODIGY_NIS_CLASS`) mirror the upstream `aa_properties` module. |
 
 ### Atomic radii
 
@@ -333,6 +334,8 @@ inside a pool worker.
 - McGaughey GB, Gagné M, Rappé AK. *J Biol Chem* 273, 15458–15463 (1998). π-stacking geometry.
 - Gallivan JP & Dougherty DA. *PNAS* 96, 9459–9464 (1999). Cation-π.
 - Bogan AA & Thorn KS. *J Mol Biol* 280, 1–9 (1998). Hot spots in protein interfaces.
+- Tien MZ, Meyer AG, Sydykova DK, Spielman SJ, Wilke CO. *PLoS ONE* 8, e80635 (2013). Maximum allowed solvent accessibilities of residues in proteins (reference SASA values).
+- Vangone A & Bonvin AMJJ. *eLife* 4, e07454 (2015). PRODIGY: contacts-based ΔG predictor for protein–protein binding affinity.
 
 ---
 
@@ -357,6 +360,7 @@ sc_lo         = np.percentile([r.sc for r in natives], 5)
 dsasa_lo      = np.percentile([r.dsasa for r in natives], 5)
 unsats_hi     = np.percentile([r.buried_unsat_polar for r in natives], 95)
 sidechain_lo  = np.percentile([r.sidechain_fraction for r in natives], 5)
+prodigy_hi    = np.percentile([r.prodigy_dg for r in natives], 95)  # less negative = worse
 
 # Filter designs that look at least as good as the 5th-percentile native.
 designs = score_all(design_pdbs, ["H"], ["A"])
@@ -366,6 +370,7 @@ passing = [
     and r.dsasa >= dsasa_lo
     and r.buried_unsat_polar <= unsats_hi
     and r.sidechain_fraction >= sidechain_lo
+    and r.prodigy_dg <= prodigy_hi
 ]
 print(f"{len(passing)} / {len(designs)} designs pass all filters")
 ```

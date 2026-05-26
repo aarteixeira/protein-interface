@@ -8,6 +8,10 @@ from protein_interface._core import (
 )
 from protein_interface.batch import score_many
 from protein_interface.interface import (
+    PRODIGY_COEFFS,
+    PRODIGY_IC_CLASS,
+    PRODIGY_NIS_CLASS,
+    REFERENCE_SASA,
     AtomArrays,
     InterfaceResult,
     analyze,
@@ -34,6 +38,9 @@ from protein_interface.interface import (
     n_interface_residues,
     per_residue_dsasa,
     pi_pi_contacts,
+    prodigy,
+    prodigy_ics,
+    prodigy_nis,
     salt_bridges,
     sasa,
 )
@@ -84,6 +91,13 @@ __all__ = [
     "confidence_at_interface",
     "bb_sc_dsasa_split",
     "charge_complementarity",
+    "prodigy",
+    "prodigy_ics",
+    "prodigy_nis",
+    "PRODIGY_COEFFS",
+    "PRODIGY_IC_CLASS",
+    "PRODIGY_NIS_CLASS",
+    "REFERENCE_SASA",
     "analyze",
     "analyze_batch",
 ]
