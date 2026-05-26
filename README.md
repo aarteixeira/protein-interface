@@ -66,187 +66,67 @@ and [Performance](#performance) for timing on 200K-structure pipelines.
 
 ---
 
-## SC-only entry points
+## Loading structures
 
-If you only care about Lawrence-Colman shape complementarity (no SASA, no
-H-bonds, no other geometry), the fast path is to call `compute_sc()` directly,
-or use one of the file-loading wrappers below.
+Every metric in `analyze()` operates on `AtomArrays` — a dataclass holding
+parallel lists of coordinates, atom names, residue names, residue IDs
+(`(chain_id, resseq)`), and optional B-factors (= pLDDT for AlphaFold / Boltz /
+BoltzGen outputs).
 
-### 1. From a PDB or mmCIF file path
-
-The simplest entry point. Accepts `.pdb`, `.ent`, and `.cif` files.
+### From a PDB or mmCIF file
 
 ```python
-import protein_interface
+from protein_interface import load_atoms
 
-result = protein_interface.from_pdb("complex.pdb", chains_a=["H"], chains_b=["A"])
-print(result.sc)               # e.g. 0.714
-print(result.median_distance)  # Å
-print(result.trimmed_area)     # Å²
-print(result.atoms_a, result.atoms_b)
-
-# chains_b=None → all chains not in chains_a
-result = protein_interface.from_pdb("complex.pdb", chains_a=["H"])
-
-# mmCIF works identically
-result = protein_interface.from_pdb("complex.cif", chains_a=["H"], chains_b=["A"])
+a = load_atoms("complex.pdb", chains=["H"])
+b = load_atoms("complex.pdb", chains=["A"])
 ```
 
----
+Accepts `.pdb`, `.ent`, `.cif`, and `.mmcif`. ATOM records only by default —
+pass `include_hetatm=True` to include HETATM, `include_hydrogens=True` to keep
+hydrogens, `model=N` to pick a model from a multi-model file. Altlocs are
+selected as ' ' or 'A' (matches the `sc-rs` CLI).
 
-### 2. From a biopython Structure object
+### From in-memory coordinates
 
-Use this when you have already parsed the file with biopython, or when you
-need to manipulate the structure before scoring.
-
-```python
-from Bio.PDB import PDBParser
-import protein_interface
-
-parser = PDBParser(QUIET=True)
-structure = parser.get_structure("complex", "complex.pdb")
-
-result = protein_interface.from_structure(structure, chains_a=["H"], chains_b=["A"])
-```
-
-Works with any biopython `Structure` regardless of how it was created
-(PDB, mmCIF, downloaded from RCSB, built programmatically, etc.).
-
----
-
-### 3. From a biotite AtomArray
-
-[biotite](https://www.biotite-python.org/) is used natively by BoltzGen's
-analysis stack. Pass an `AtomArray` or `AtomArrayStack` (first model is used).
+If your coordinates come from a simulation, generative model, or a parser this
+package doesn't wrap, build the `AtomArrays` directly:
 
 ```python
-import biotite.structure.io.pdbx as pdbx
-import protein_interface
+from protein_interface import AtomArrays
 
-cif = pdbx.CIFFile.read("complex.cif")
-atoms = pdbx.get_structure(cif, model=1, use_author_fields=False)
-
-result = protein_interface.from_biotite(atoms, chains_a=["H"], chains_b=["A"])
-```
-
----
-
-### 4. From raw coordinate arrays
-
-The lowest-level entry point — no file I/O, no parser overhead. Pass numpy
-arrays or plain Python lists of `[x, y, z]` coordinates alongside atom and
-residue names. Useful when coordinates are already in memory from a simulation
-or generative model.
-
-```python
-import protein_interface
-
-result = protein_interface.compute_sc(
-    coords_a        = [[x, y, z], ...],   # shape (N, 3), Å
-    atom_names_a    = ["CA", "CB", ...],
-    residue_names_a = ["ALA", "ALA", ...],
-    coords_b        = [[x, y, z], ...],
-    atom_names_b    = ["CA", ...],
-    residue_names_b = ["GLY", ...],
+a = AtomArrays(
+    coords        = [[x1, y1, z1], [x2, y2, z2], ...],
+    atom_names    = ["N", "CA", "C", ...],
+    residue_names = ["ALA", "ALA", "ALA", ...],
+    residue_ids   = [("A", 1), ("A", 1), ("A", 1), ...],   # (chain, resseq) per atom
+    bfactors      = [80.5, 79.2, 78.6, ...],               # optional; pLDDT or B
 )
 ```
 
-Atom radii are assigned automatically from the atom-name + residue-name pair.
-Atoms whose combination is not in the sc-rs radius table are silently dropped
-(same behavior as the sc-rs CLI).
+### SC-only entry points (skip the AtomArrays step)
 
----
+For users who only need Lawrence-Colman shape complementarity, file-loading
+wrappers that go straight to `compute_sc()` are available. They return a
+`ScResult` (`sc`, `median_distance`, `trimmed_area`, `atoms_a`, `atoms_b`):
 
-### 5. From BoltzGen output
+| Function | Use when |
+|---|---|
+| `from_pdb(path, chains_a, chains_b)` | `.pdb` or `.cif` on disk |
+| `from_structure(struct, chains_a, chains_b)` | biopython `Structure` already in memory |
+| `from_biotite(atom_array, chains_a, chains_b)` | biotite `AtomArray` (e.g. from BoltzGen's analysis stack) |
+| `from_boltzgen_structure(struct, chains_a, chains_b)` | BoltzGen `Structure` in memory |
+| `from_boltzgen_refold(refold_cif, chains_a, chains_b)` | BoltzGen `refold_cif/*.cif` design |
+| `score_many(paths, chains_a, chains_b, n_workers=8)` | Many files via `ProcessPoolExecutor`, returns a `pandas.DataFrame` |
 
-BoltzGen writes full-atom, Boltz-validated complexes to `refold_cif/*.cif`.
-These are the right structures to score — post-generation files have zeroed
-sidechain coordinates and should not be used for SC.
+For the full metric suite, load via `load_atoms()` and call `analyze()` (or
+`analyze_batch()` for many complexes). SC is included by default in
+`InterfaceResult.sc`; pass `include_sc=False` to skip it for batch speed.
 
-**Option A — file path (no extra dependencies):**
-```python
-import protein_interface
-
-# Works exactly like from_pdb; biopython handles the mmCIF
-result = protein_interface.from_pdb(
-    "output/intermediate_designs_inverse_folded/refold_cif/design_0.cif",
-    chains_a=["B"],  # binder
-    chains_b=["A"],  # target
-)
-```
-
-**Option B — via biotite (matches BoltzGen's own analysis stack):**
-```python
-import protein_interface
-
-result = protein_interface.from_boltzgen_refold(
-    "output/.../refold_cif/design_0.cif",
-    chains_a=["B"],
-    chains_b=["A"],
-)
-```
-
-**Option C — from an in-memory BoltzGen `Structure` object:**
-
-No boltzgen import required; the function duck-types against the numpy
-structured-array layout of `boltzgen.data.data.Structure`.
-
-```python
-import protein_interface
-
-# structure is a boltzgen.data.data.Structure loaded elsewhere in the pipeline
-result = protein_interface.from_boltzgen_structure(
-    structure,
-    chains_a=["B"],
-    chains_b=["A"],
-)
-```
-
-> **Which stage to use?** Only `refold_cif/` structures have complete, physically
-> validated all-atom coordinates. `intermediate_designs/` NPZ files (post-generation)
-> have backbone-only coordinates; `intermediate_designs_inverse_folded/` NPZ files
-> have sidechains but have not yet been validated by Boltz.
-
----
-
-### 6. Batch scoring
-
-Score many files in parallel using `ProcessPoolExecutor`. Returns a
-`pd.DataFrame` with one row per file; exceptions are caught per-file and
-reported in the `status` / `error` columns rather than crashing the batch.
-
-```python
-from pathlib import Path
-import protein_interface
-
-paths = list(Path("refold_cif").glob("*.cif"))
-
-df = protein_interface.score_many(
-    paths,
-    chains_a=["B"],
-    chains_b=["A"],
-    n_workers=8,
-)
-
-print(df[df.status == "ok"][["path", "sc"]].sort_values("sc", ascending=False))
-```
-
-Rayon parallelism is disabled inside each worker by default (`parallel=False`)
-to avoid oversubscription with multiple processes.
-
----
-
-## ScResult
-
-All functions return an `ScResult` with these read-only properties:
-
-| Property | Type | Description |
-|---|---|---|
-| `sc` | `float` | Shape complementarity (−1 to 1; native interfaces typically 0.6–0.8) |
-| `median_distance` | `float` | Median nearest-surface distance (Å) |
-| `trimmed_area` | `float` | Total trimmed interface area (Å²) |
-| `atoms_a` | `int` | Heavy atoms accepted for molecule A |
-| `atoms_b` | `int` | Heavy atoms accepted for molecule B |
+> **BoltzGen tip:** only `refold_cif/*.cif` files have validated full-atom
+> coordinates. `intermediate_designs/` is backbone-only;
+> `intermediate_designs_inverse_folded/` has side chains but is pre-Boltz.
+> Use refold_cif for any meaningful analysis.
 
 ---
 
@@ -459,41 +339,41 @@ inside a pool worker.
 
 ## Calibration recipe for design filters
 
+Establish per-metric thresholds from a set of known good interfaces, then apply
+to design candidates. Works for any field on `InterfaceResult`, not just SC.
+
 ```python
 import numpy as np
-import protein_interface
+from protein_interface import analyze_batch, load_atoms
 
-# Score known native complexes to establish a baseline
-natives = protein_interface.score_many(native_pdbs, chains_a=["H"], chains_b=["A"])
-threshold = np.percentile(natives[natives.status == "ok"]["sc"], 5)
-print(f"5th-percentile SC threshold: {threshold:.3f}")
+def score_all(paths, chains_a, chains_b, *, parallel=True):
+    complexes = [
+        (load_atoms(p, chains_a), load_atoms(p, chains_b)) for p in paths
+    ]
+    return analyze_batch(complexes, parallel=parallel)
 
-# Filter design candidates
-designs = protein_interface.score_many(design_pdbs, chains_a=["H"], chains_b=["A"])
-passing = designs[designs["sc"] >= threshold]
+# Baseline from natives — pick percentile thresholds per metric.
+natives = score_all(native_pdbs, ["H"], ["A"])
+sc_lo         = np.percentile([r.sc for r in natives], 5)
+dsasa_lo      = np.percentile([r.dsasa for r in natives], 5)
+unsats_hi     = np.percentile([r.buried_unsat_polar for r in natives], 95)
+sidechain_lo  = np.percentile([r.sidechain_fraction for r in natives], 5)
+
+# Filter designs that look at least as good as the 5th-percentile native.
+designs = score_all(design_pdbs, ["H"], ["A"])
+passing = [
+    r for r in designs
+    if r.sc >= sc_lo
+    and r.dsasa >= dsasa_lo
+    and r.buried_unsat_polar <= unsats_hi
+    and r.sidechain_fraction >= sidechain_lo
+]
+print(f"{len(passing)} / {len(designs)} designs pass all filters")
 ```
 
----
-
-## Benchmark
-
-Run `python benchmark/speed.py` after `maturin develop --release`. Example output
-on an Apple M3 Pro (10-core) with 1FYT chains D vs A (1521+1479 heavy atoms,
-~190 residues each):
-
-```
-=== protein_interface speed benchmark ===
-
-  [PASS] from_pdb (1FYT, 300+300 residues)           115.2 ms   target: < 200 ms
-  [PASS] compute_sc (1521 + 1479 atoms)               63.7 ms   target: < 100 ms
-  [PASS] score_many (100 files, 8 workers)           33.2 cx/s   target: maximize
-
-All targets met.
-```
-
-The first `from_pdb` call in a fresh process incurs a one-time ~400 ms cost for
-Rust shared-library initialisation. Subsequent calls run at steady-state speed
-as shown above. `score_many` amortises this across worker processes.
+For low-confidence-aware filtering on AlphaFold / Boltz / BoltzGen outputs,
+also gate on `r.min_bfactor_interface` — a single low-pLDDT atom in an
+otherwise-confident interface usually marks a bad contact.
 
 ---
 
