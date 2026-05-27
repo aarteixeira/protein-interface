@@ -112,6 +112,39 @@ def _ala_chain(chain_name: str, n: int, offset: tuple[float, float, float]) -> t
     return (chain_name, residues)
 
 
+# ── Layout validator tests ───────────────────────────────────────────────────
+
+def test_from_boltzgen_structure_rejects_missing_attribute():
+    """A plain object without .chains / .residues / .atoms must fail cleanly."""
+    class NotAStructure:
+        pass
+    with pytest.raises(TypeError, match=r"missing \.chains"):
+        from_boltzgen_structure(NotAStructure(), chains_a=["A"], chains_b=["B"])
+
+
+def test_from_boltzgen_structure_rejects_non_structured_array():
+    """.chains being a plain ndarray (no dtype.names) should fail loudly."""
+    class WrongShape:
+        chains = np.arange(10)        # plain array, no fields
+        residues = np.arange(10)
+        atoms = np.arange(10)
+    with pytest.raises(TypeError, match="not a numpy structured array"):
+        from_boltzgen_structure(WrongShape(), chains_a=["A"], chains_b=["B"])
+
+
+def test_from_boltzgen_structure_rejects_missing_field():
+    """A structured array missing a required field should name the missing field."""
+    bad_chain_dt = np.dtype([("name", "<U4")])  # missing res_idx, res_num
+    Atom_dt = np.dtype([("name", "<U4"), ("coords", "3f4"), ("is_present", "?")])
+    Residue_dt = np.dtype([("name", "<U5"), ("atom_idx", "i4"), ("atom_num", "i4")])
+    class Drift:
+        chains = np.array([("A",)], dtype=bad_chain_dt)
+        residues = np.zeros(0, dtype=Residue_dt)
+        atoms = np.zeros(0, dtype=Atom_dt)
+    with pytest.raises(TypeError, match=r"\['res_idx', 'res_num'\]"):
+        from_boltzgen_structure(Drift(), chains_a=["A"], chains_b=["B"])
+
+
 # ── from_boltzgen_structure tests ────────────────────────────────────────────
 
 def test_from_boltzgen_structure_smoke():
