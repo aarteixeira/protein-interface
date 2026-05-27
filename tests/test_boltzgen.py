@@ -1,6 +1,6 @@
-"""Tests for BoltzGen integration (from_biotite, from_boltzgen_structure).
+"""Tests for BoltzGen integration (from_biotite, from_boltzgen_structure, from_boltzgen_refold).
 
-from_biotite requires biotite; tests are skipped when not installed.
+from_biotite and from_boltzgen_refold require biotite; tests are skipped when not installed.
 from_boltzgen_structure is tested via duck-typed numpy mocks — no boltzgen import needed.
 """
 from __future__ import annotations
