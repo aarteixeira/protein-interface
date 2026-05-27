@@ -8,7 +8,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from protein_interface import from_biotite, from_boltzgen_structure
+from protein_interface import from_biotite
+
+# from_boltzgen_structure is intentionally un-exported from the public API
+# pending real-Structure end-to-end test coverage; reach into the module to
+# exercise the existing implementation here.
+from protein_interface.io import from_boltzgen_structure
 from protein_interface._core import ScResult
 from protein_interface.io import _is_hydrogen
 

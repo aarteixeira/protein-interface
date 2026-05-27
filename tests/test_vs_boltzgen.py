@@ -23,7 +23,10 @@ import numpy as np
 import pytest
 from Bio.PDB import PDBParser
 
-from protein_interface import from_boltzgen_structure, from_pdb
+from protein_interface import from_pdb
+# from_boltzgen_structure is un-exported from the public API pending a
+# real-Structure end-to-end test; reach into the module to exercise it.
+from protein_interface.io import from_boltzgen_structure
 from protein_interface.io import (
     _BOLTZGEN_REQUIRED_FIELDS,
     _is_hydrogen,

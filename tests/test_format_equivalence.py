@@ -20,12 +20,13 @@ import pytest
 from protein_interface import (
     analyze,
     from_biotite,
-    from_boltzgen_structure,
     from_pdb,
     from_structure,
     load_atoms,
 )
-from protein_interface.io import _is_hydrogen, _select_real_atom
+# from_boltzgen_structure is un-exported pending real-Structure end-to-end
+# test coverage; reach into the module to exercise it.
+from protein_interface.io import _is_hydrogen, _select_real_atom, from_boltzgen_structure
 
 DATA = Path(__file__).parent / "data"
 PDB_1FYT = DATA / "1fyt.pdb"
