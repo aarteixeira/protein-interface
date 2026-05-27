@@ -130,6 +130,28 @@ For the full metric suite, load via `load_atoms()` and call `analyze()` (or
 > `intermediate_designs_inverse_folded/` has side chains but is pre-Boltz.
 > Use refold_cif for any meaningful analysis.
 
+### Intake-format equivalence
+
+Every supported intake path is locked together by [`tests/test_format_equivalence.py`](tests/test_format_equivalence.py),
+which verifies that loading the same structure (1FYT) through each entry point
+yields the same atom selection and the same downstream numbers.
+
+| Comparison | Tolerance |
+|---|---|
+| `load_atoms(.pdb)` ↔ `load_atoms(.cif)` — atom counts, names, residue IDs | exact |
+| `load_atoms(.pdb)` ↔ `load_atoms(.cif)` — per-atom coords | 10⁻³ Å |
+| `analyze(PDB)` ↔ `analyze(CIF)` — every `InterfaceResult` field | 10⁻⁶ (floats), exact (ints) |
+| `from_pdb(.pdb).sc` ↔ `analyze(load_atoms(.pdb)).sc` | 10⁻⁶ |
+| `from_pdb(.pdb)` ↔ `from_pdb(.cif)` | 10⁻⁶ |
+| `from_structure(parsed)` ↔ `from_pdb(file)` | 10⁻⁶ |
+| `from_biotite(CIF via biotite)` ↔ `from_pdb(.pdb)` | 10⁻³ SC, ±5 atoms |
+| `from_boltzgen_structure(1FYT-shaped struct)` ↔ `from_pdb(.pdb)` | 10⁻⁶ |
+
+Empirically all eight comparisons currently pass at the tight end of their
+tolerance (SC = 0.7094, 1479 + 1459 atoms on every path). Any future parser
+change that shifts atom selection or coordinate rounding will fail the suite
+immediately.
+
 ---
 
 ## Interface analysis
