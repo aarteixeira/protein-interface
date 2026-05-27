@@ -163,3 +163,36 @@ def test_our_required_fields_are_in_upstream_dtypes():
             f"in upstream boltzgen.data.data ({attr.title()}). Present upstream "
             f"fields: {sorted(upstream[attr])}."
         )
+
+
+# ── End-to-end through BoltzGen's own machinery ─────────────────────────────
+#
+# These tests don't run BoltzGen's model, but they do exercise its loader I/O
+# (Structure.dump → Structure.load) and its own constructors (empty_protein).
+# A truly end-to-end test would require a GPU and an actual BoltzGen
+# generation run — out of scope here, but the gap is documented.
+
+def test_upstream_empty_protein_passes_validator():
+    """`Structure.empty_protein` constructs a Structure entirely through
+    BoltzGen's own code. If their constructor produces a layout we can't
+    consume, our validator will catch it here."""
+    struct = bd.Structure.empty_protein(seq_len=5)
+    _validate_boltzgen_layout(struct)
+
+
+def test_dump_load_roundtrip_through_boltzgen_npz(tmp_path):
+    """Save → load through BoltzGen's own NPZ machinery and verify our
+    function still works on the reloaded Structure. This catches drift in
+    BoltzGen's I/O layer (compression, field renaming during serialization,
+    etc.) that bypasses the dataclass constructor."""
+    original = _build_real_structure_from_pdb(PDB_1FYT, ["A", "B"])
+    npz_path = tmp_path / "1fyt.boltzgen.npz"
+    original.dump(npz_path)
+    reloaded = bd.Structure.load(npz_path)
+    _validate_boltzgen_layout(reloaded)
+
+    r_reloaded = from_boltzgen_structure(reloaded, chains_a=["A"], chains_b=["B"])
+    r_pdb = from_pdb(PDB_1FYT, chains_a=["A"], chains_b=["B"])
+    assert r_reloaded.sc == pytest.approx(r_pdb.sc, abs=1e-6)
+    assert r_reloaded.atoms_a == r_pdb.atoms_a
+    assert r_reloaded.atoms_b == r_pdb.atoms_b
