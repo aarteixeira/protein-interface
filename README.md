@@ -115,9 +115,11 @@ wrappers that go straight to `compute_sc()` are available. They return a
 | `from_pdb(path, chains_a, chains_b)` | `.pdb` or `.cif` on disk |
 | `from_structure(struct, chains_a, chains_b)` | biopython `Structure` already in memory |
 | `from_biotite(atom_array, chains_a, chains_b)` | biotite `AtomArray` (e.g. from BoltzGen's analysis stack) |
-| `from_boltzgen_structure(struct, chains_a, chains_b)` | BoltzGen `Structure` in memory |
-| `from_boltzgen_refold(refold_cif, chains_a, chains_b)` | BoltzGen `refold_cif/*.cif` design |
+| `from_boltzgen_structure(struct, chains_a, chains_b)` | BoltzGen `Structure` in memory (numpy structured-array layout) |
 | `score_many(paths, chains_a, chains_b, n_workers=8)` | Many files via `ProcessPoolExecutor`, returns a `pandas.DataFrame` |
+
+BoltzGen `refold_cif/*.cif` files are standard mmCIF — load them via `from_pdb()` or
+`load_atoms()` (both already handle CIF through biopython).
 
 For the full metric suite, load via `load_atoms()` and call `analyze()` (or
 `analyze_batch()` for many complexes). SC is included by default in

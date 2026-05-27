@@ -47,7 +47,6 @@ from protein_interface.interface import (
 )
 from protein_interface.io import (
     from_biotite,
-    from_boltzgen_refold,
     from_boltzgen_structure,
     from_pdb,
     from_structure,
@@ -62,7 +61,6 @@ __all__ = [
     "from_structure",
     "from_biotite",
     "from_boltzgen_structure",
-    "from_boltzgen_refold",
     "score_many",
     "count_salt_bridge_atom_pairs",
     "unknown_sasa_radius_atoms",

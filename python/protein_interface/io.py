@@ -5,10 +5,9 @@ Parsing logic mirrors src/bin/sc.rs in sc-rs exactly so that parity tests pass:
 - Alternate locations: keep ' ' and 'A', skip all others
 - Hydrogens: excluded by default using the same heuristic as the CLI
 
-BoltzGen integration (from_biotite, from_boltzgen_structure, from_boltzgen_refold)
-is appended at the bottom. The recommended entry point for BoltzGen output is
-from_boltzgen_refold() on the refold_cif/*.cif files, which contain full all-atom
-coordinates validated by Boltz. from_pdb() also works for the same files.
+BoltzGen integration (from_biotite, from_boltzgen_structure) is appended at the
+bottom. BoltzGen `refold_cif/*.cif` files are ordinary mmCIF — load them with
+`from_pdb()` (biopython) or `load_atoms()` for the analyze pipeline.
 """
 from __future__ import annotations
 
@@ -215,8 +214,8 @@ def from_pdb(
 #     refold_design_cif/<id>.cif             – binder-only refold
 #
 # The refold_cif files are full-atom mmCIF with pLDDT in B-factors. They are
-# the Boltz-validated structures and the right input for SC. Both from_pdb()
-# and from_boltzgen_refold() accept them.
+# the Boltz-validated structures and the right input for SC. Load them with
+# from_pdb() (biopython) or load_atoms() — both already handle mmCIF.
 #
 # Chain naming in BoltzGen output: the binder chain is typically the last chain
 # (e.g. "B" when the target is "A"), but verify from the CIF or the Record JSON
@@ -298,9 +297,8 @@ def from_boltzgen_structure(
 
     Important: use post-refold structures for meaningful SC scores. Structures
     from intermediate_designs/ have zeroed sidechain coordinates and will give
-    unreliable results. Prefer from_boltzgen_refold() on the refold_cif files,
-    or load the Structure NPZ from intermediate_designs_inverse_folded/ after
-    refolding completes.
+    unreliable results. For refold_cif/*.cif files on disk, use from_pdb() or
+    load_atoms() directly (both handle mmCIF via biopython).
     """
     all_chain_names = [str(n) for n in structure.chains["name"]]
 
@@ -389,47 +387,3 @@ def from_biotite(
     return compute_sc(coords_a, names_a, res_a, coords_b, names_b, res_b, parallel)
 
 
-def from_boltzgen_refold(
-    refold_cif_path: str | Path,
-    chains_a: list[str],
-    chains_b: list[str] | None = None,
-    include_hydrogens: bool = False,
-    parallel: bool = True,
-    strict: bool = True,
-) -> ScResult:
-    """Compute SC from a BoltzGen refold_cif/*.cif file using biotite.
-
-    This is the recommended entry point when scoring BoltzGen designs.
-    It mirrors the CIF-loading pattern used by BoltzGen's own analyze_utils.py.
-
-    Args:
-        refold_cif_path:    path to refold_cif/<id>.cif or refold_design_cif/<id>.cif
-        chains_a:           chain IDs for molecule A (typically the binder)
-        chains_b:           chain IDs for molecule B; None = all chains not in chains_a
-        include_hydrogens:  include hydrogen atoms (default False)
-        parallel:           enable Rayon parallelism inside sc-rs
-
-    Raises:
-        ImportError: if biotite is not installed. Install with: pip install biotite
-    """
-    try:
-        import biotite.structure.io.pdbx as pdbx
-    except ImportError as exc:
-        raise ImportError(
-            "biotite is required for from_boltzgen_refold(). "
-            "Install it with: pip install biotite"
-        ) from exc
-
-    cif_file = pdbx.CIFFile.read(str(refold_cif_path))
-    # model=1 is 1-based in biotite; use_author_fields=False uses label_* fields
-    # (consistent with how BoltzGen writes chain IDs)
-    atom_array = pdbx.get_structure(cif_file, model=1, use_author_fields=False)
-    return from_biotite(
-        atom_array,
-        chains_a,
-        chains_b,
-        include_hetatm=False,
-        include_hydrogens=include_hydrogens,
-        parallel=parallel,
-        strict=strict,
-    )
