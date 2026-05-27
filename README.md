@@ -116,7 +116,7 @@ wrappers that go straight to `compute_sc()` are available. They return a
 | `from_structure(struct, chains_a, chains_b)` | biopython `Structure` already in memory |
 | `from_biotite(atom_array, chains_a, chains_b)` | biotite `AtomArray` (e.g. from BoltzGen's analysis stack) |
 | `from_boltzgen_structure(struct, chains_a, chains_b)` | BoltzGen `Structure` in memory |
-| `from_boltzgen_refold(refold_cif, chains_a, chains_b)` | BoltzGen `refold_cif/*.cif` design |
+| `from_boltzgen_refold(refold_cif, chains_a, chains_b)` | BoltzGen `refold_cif/*.cif` design — reads via biotite with `use_author_fields=False` so chain IDs match BoltzGen's `label_asym_id` convention. Don't use `from_pdb`/`load_atoms` here unless you've verified your file populates `auth_asym_id`. |
 | `score_many(paths, chains_a, chains_b, n_workers=8)` | Many files via `ProcessPoolExecutor`, returns a `pandas.DataFrame` |
 
 For the full metric suite, load via `load_atoms()` and call `analyze()` (or

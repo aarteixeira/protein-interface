@@ -399,8 +399,18 @@ def from_boltzgen_refold(
 ) -> ScResult:
     """Compute SC from a BoltzGen refold_cif/*.cif file using biotite.
 
-    This is the recommended entry point when scoring BoltzGen designs.
-    It mirrors the CIF-loading pattern used by BoltzGen's own analyze_utils.py.
+    BoltzGen writes its chain IDs to the mmCIF ``label_asym_id`` column, not the
+    ``auth_asym_id`` column that biopython and biotite default to. Loading a
+    refold_cif via :func:`from_pdb` (biopython MMCIFParser, auth fields) or via
+    :func:`from_biotite` with biotite's default ``use_author_fields=True`` can
+    therefore look up chain IDs that don't exist in the file. This wrapper
+    calls biotite with ``use_author_fields=False`` so the chain IDs you pass in
+    `chains_a` / `chains_b` are matched against ``label_asym_id`` — the column
+    BoltzGen actually populates. It mirrors the CIF-loading pattern in BoltzGen's
+    own analyze_utils.py.
+
+    For any other mmCIF source (RCSB, AlphaFold, etc.) use :func:`from_pdb` or
+    :func:`load_atoms` — they handle the standard ``auth_*`` convention.
 
     Args:
         refold_cif_path:    path to refold_cif/<id>.cif or refold_design_cif/<id>.cif
