@@ -196,3 +196,40 @@ def test_dump_load_roundtrip_through_boltzgen_npz(tmp_path):
     assert r_reloaded.sc == pytest.approx(r_pdb.sc, abs=1e-6)
     assert r_reloaded.atoms_a == r_pdb.atoms_a
     assert r_reloaded.atoms_b == r_pdb.atoms_b
+
+
+# ── Real-world BoltzGen output ──────────────────────────────────────────────
+# A genuine refold_cif/*.cif from a past BoltzGen ubiquitin-binder design run
+# (chain A = ubiquitin target, chain B = generated binder). The closest thing
+# to "end-to-end through real BoltzGen machinery" we can ship in-tree —
+# BoltzGen never writes full Structure NPZ files to disk in its pipeline,
+# only tensor/feature NPZs and refold CIFs.
+
+from protein_interface import from_boltzgen_refold  # noqa: E402
+
+BOLTZGEN_REFOLD_CIF = DATA / "boltzgen_refold_ubiquitin.cif"
+
+
+@pytest.mark.skipif(
+    not BOLTZGEN_REFOLD_CIF.exists(),
+    reason="real BoltzGen refold_cif fixture not present",
+)
+def test_real_boltzgen_refold_cif():
+    """End-to-end: a real BoltzGen refold_cif/*.cif → from_boltzgen_refold →
+    sensible SC. Cross-checked against from_pdb to confirm both loaders agree
+    on a structure produced by an actual BoltzGen design run."""
+    r_bg = from_boltzgen_refold(BOLTZGEN_REFOLD_CIF, chains_a=["B"], chains_b=["A"])
+    r_pdb = from_pdb(BOLTZGEN_REFOLD_CIF, chains_a=["B"], chains_b=["A"])
+
+    # Sanity ranges: predicted binder, SC should be physical (-1 … 1), atom
+    # counts plausible for a ubiquitin + small binder complex.
+    assert -1.0 <= r_bg.sc <= 1.0
+    assert 0.3 < r_bg.sc < 0.9, f"SC {r_bg.sc} outside the plausible band for a binder"
+    assert r_bg.atoms_a > 100, "binder chain should have many atoms"
+    assert r_bg.atoms_b > 100, "target chain should have many atoms"
+
+    # The auth-vs-label distinction doesn't matter for this particular file
+    # (both columns carry "A"/"B"), so the two loaders must agree exactly.
+    assert r_bg.sc == pytest.approx(r_pdb.sc, abs=1e-6)
+    assert r_bg.atoms_a == r_pdb.atoms_a
+    assert r_bg.atoms_b == r_pdb.atoms_b
