@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.1] — 2026-05-30
+
+### Added
+
+- `analyze()` and `analyze_batch()` now accept `metrics={...}` and
+  `skip_metrics={...}` to avoid computing unneeded metrics. Disabled result
+  fields are returned as `None`.
+
+### Fixed
+
+- Numeric parameters for Python helpers and Rust kernels now reject non-finite
+  or negative radii/cutoffs instead of letting invalid values reach metric
+  calculations.
+- Public `AtomArrays` inputs now reject internal side-qualified residue IDs.
+
 ## [0.1.0] — 2026-05-25
 
 ### Added
