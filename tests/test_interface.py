@@ -14,8 +14,11 @@ import pytest
 
 from protein_interface import (
     analyze,
+    analyze_batch,
     compute_sasa,
+    compute_sasa_batch,
     count_hbonds,
+    count_salt_bridge_atom_pairs,
     delta_sasa,
     hbonds,
     interface_residues,
@@ -48,6 +51,18 @@ def test_compute_sasa_unknown_atom_returns_zero():
 def test_compute_sasa_validates_array_lengths():
     with pytest.raises(ValueError):
         compute_sasa([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], ["CB"], ["ALA"], 1.4, 92)
+
+
+@pytest.mark.parametrize("probe_radius", [-1.0, math.nan])
+def test_compute_sasa_rejects_invalid_probe_radius(probe_radius):
+    with pytest.raises(ValueError, match="probe_radius"):
+        compute_sasa([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], probe_radius, 92)
+
+
+@pytest.mark.parametrize("probe_radius", [-1.0, math.nan])
+def test_compute_sasa_batch_rejects_invalid_probe_radius(probe_radius):
+    with pytest.raises(ValueError, match="probe_radius"):
+        compute_sasa_batch([([[0.0, 0.0, 0.0]], ["CB"], ["ALA"])], probe_radius, 92, True)
 
 
 def test_compute_sasa_two_touching_atoms_have_less_than_isolated():
@@ -95,6 +110,26 @@ def test_count_hbonds_beyond_cutoff():
         3.5,
     )
     assert n == 0
+
+
+@pytest.mark.parametrize("cutoff", [-1.0, math.nan])
+def test_count_hbonds_rejects_invalid_cutoff(cutoff):
+    with pytest.raises(ValueError, match="cutoff"):
+        count_hbonds(
+            [[0.0, 0.0, 0.0]], ["N"], ["ALA"],
+            [[2.9, 0.0, 0.0]], ["O"], ["ALA"],
+            cutoff,
+        )
+
+
+@pytest.mark.parametrize("cutoff", [-1.0, math.nan])
+def test_count_salt_bridge_atom_pairs_rejects_invalid_cutoff(cutoff):
+    with pytest.raises(ValueError, match="cutoff"):
+        count_salt_bridge_atom_pairs(
+            [[0.0, 0.0, 0.0]], ["OD1"], ["ASP"],
+            [[3.0, 0.0, 0.0]], ["NZ"], ["LYS"],
+            cutoff,
+        )
 
 
 # ── Integration tests on 1ZVH (nanobody-lysozyme) ────────────────────────────
@@ -158,6 +193,42 @@ def test_analyze_combines_metrics(nb_ag):
     assert res.hbonds >= 0
 
 
+def test_analyze_skip_metrics_returns_none_and_avoids_metric(monkeypatch, nb_ag):
+    import protein_interface.interface as iface
+
+    def boom(*args, **kwargs):
+        raise AssertionError("hbonds should not run")
+
+    monkeypatch.setattr(iface, "hbonds", boom)
+    a, b = nb_ag
+    res = analyze(a, b, n_points=92, skip_metrics={"hbonds", "hbond_density"})
+    assert res.hbonds is None
+    assert res.hbond_density is None
+    assert res.dsasa > 800
+
+
+def test_analyze_metrics_subset_skips_sasa_validation_and_compute(monkeypatch):
+    from protein_interface import AtomArrays
+    import protein_interface.interface as iface
+
+    def boom(*args, **kwargs):
+        raise AssertionError("SASA should not run")
+
+    monkeypatch.setattr(iface, "compute_sasa", boom)
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["XX"], ["ZZZ"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CA"], ["ALA"], [("B", 1)])
+    res = analyze(a, b, metrics={"hbonds"}, strict=True)
+    assert res.hbonds == 0
+    assert res.dsasa is None
+    assert res.sc is None
+
+
+def test_analyze_rejects_unknown_metric(nb_ag):
+    a, b = nb_ag
+    with pytest.raises(ValueError, match="unknown analyze metric"):
+        analyze(a, b, skip_metrics={"not_a_metric"})
+
+
 def test_analyze_rejects_empty_atom_group():
     from protein_interface import AtomArrays
     empty = AtomArrays([], [], [], [])
@@ -208,6 +279,91 @@ def test_analyze_permissive_sc_failure_returns_nan(monkeypatch):
     b = AtomArrays([[3.0, 0.0, 0.0]], ["CA"], ["ALA"], [("B", 1)])
     res = analyze(a, b, strict=False)
     assert math.isnan(res.sc)
+
+
+def test_atomarrays_rejects_side_qualified_public_residue_ids():
+    from protein_interface import AtomArrays
+    with pytest.raises(ValueError, match="internal-only"):
+        AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], [("a", "A", 1, "")])
+
+
+@pytest.mark.parametrize("probe_radius", [-1.0, math.nan])
+def test_analyze_rejects_invalid_probe_radius(probe_radius):
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CB"], ["ALA"], [("B", 1)])
+    with pytest.raises(ValueError, match="probe_radius"):
+        analyze(a, b, probe_radius=probe_radius, include_sc=False)
+
+
+def test_analyze_batch_rejects_invalid_probe_radius():
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CB"], ["ALA"], [("B", 1)])
+    with pytest.raises(ValueError, match="probe_radius"):
+        analyze_batch([(a, b)], probe_radius=math.nan, include_sc=False)
+
+
+@pytest.mark.parametrize("cutoff", [-5.0, math.nan])
+def test_interface_residues_rejects_invalid_cutoff(cutoff):
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CA"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[4.0, 0.0, 0.0]], ["CA"], ["ALA"], [("B", 1)])
+    with pytest.raises(ValueError, match="cutoff"):
+        interface_residues(a, b, cutoff=cutoff)
+
+
+@pytest.mark.parametrize("metric_name", [
+    "hbonds",
+    "salt_bridges",
+    "atomic_contacts",
+    "disulfide_bridges",
+    "pi_pi_contacts",
+    "cation_pi_contacts",
+])
+@pytest.mark.parametrize("cutoff", [-1.0, math.nan])
+def test_contact_metrics_reject_invalid_cutoffs(metric_name, cutoff):
+    import protein_interface as pi
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["SG"], ["CYS"], [("A", 1)])
+    b = AtomArrays([[2.0, 0.0, 0.0]], ["SG"], ["CYS"], [("B", 1)])
+    metric = getattr(pi, metric_name)
+    kwargs = {"distance_cutoff": cutoff} if metric_name in {"pi_pi_contacts", "cation_pi_contacts"} else {"cutoff": cutoff}
+    with pytest.raises(ValueError):
+        metric(a, b, **kwargs)
+
+
+def test_analyze_rejects_invalid_threshold_parameters():
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], [("A", 1)])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CB"], ["ALA"], [("B", 1)])
+    with pytest.raises(ValueError, match="n_points"):
+        analyze(a, b, n_points=3, include_sc=False)
+    with pytest.raises(ValueError, match="hbond_cutoff"):
+        analyze(a, b, hbond_cutoff=math.nan, include_sc=False)
+    with pytest.raises(ValueError, match="min_atom_dsasa_for_shape"):
+        analyze(a, b, min_atom_dsasa_for_shape=-0.1, include_sc=False)
+
+
+@pytest.mark.parametrize("metric_name,kwargs", [
+    ("interface_depth", {"min_atom_dsasa": -0.1}),
+    ("confidence_at_interface", {"min_atom_dsasa": -0.1}),
+    ("buried_unsat_polar", {"sasa_cutoff": math.nan}),
+    ("buried_unsat_polar", {"hbond_cutoff": -1.0}),
+    ("interface_shape", {"min_atom_dsasa": math.nan}),
+    ("gly_pro_fraction", {"cutoff": -1.0}),
+    ("charge_complementarity", {"cutoff": math.nan}),
+    ("prodigy_ics", {"cutoff": -1.0}),
+    ("prodigy_nis", {"rsasa_cutoff": math.nan}),
+    ("prodigy", {"cutoff": math.nan}),
+])
+def test_public_metric_helpers_reject_invalid_parameters(metric_name, kwargs):
+    import protein_interface as pi
+    from protein_interface import AtomArrays
+    a = AtomArrays([[0.0, 0.0, 0.0]], ["CB"], ["ALA"], [("A", 1)], bfactors=[80.0])
+    b = AtomArrays([[3.0, 0.0, 0.0]], ["CB"], ["ALA"], [("B", 1)], bfactors=[70.0])
+    with pytest.raises(ValueError):
+        getattr(pi, metric_name)(a, b, **kwargs)
 
 
 # ── New-metric unit tests ────────────────────────────────────────────────────

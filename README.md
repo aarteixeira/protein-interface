@@ -167,6 +167,8 @@ result = analyze(
     min_atom_dsasa_for_shape=0.5,
     include_sc=True,
     strict=True,
+    skip_metrics=None,
+    metrics=None,
 )
 ```
 
@@ -176,6 +178,14 @@ to `n_points=960`.
 
 Use `include_sc=False` when you need the non-SC metrics and want to skip the
 separate SC calculation.
+
+Use `skip_metrics={...}` to disable named `InterfaceResult` fields, or
+`metrics={...}` to compute only a named subset. This avoids the corresponding
+metric work where the calculation is independent. For example,
+`analyze(a, b, skip_metrics={"prodigy_dg", "buried_unsat_polar"})` skips the
+PRODIGY pass and buried-unsat scan, while `analyze(a, b, metrics={"hbonds"})`
+does not run SASA or SC at all. Unknown metric names raise `ValueError`.
+Disabled fields are returned as `None`.
 
 ## Metrics
 

@@ -22,6 +22,16 @@ pub struct ScResult {
     pub atoms_b: usize,
 }
 
+fn validate_nonnegative_finite(name: &str, value: f64) -> PyResult<()> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{} must be a finite non-negative number",
+            name
+        )));
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl ScResult {
     fn __repr__(&self) -> String {
@@ -135,6 +145,7 @@ fn compute_sasa(
     if n_points < 4 {
         return Err(PyValueError::new_err("n_points must be >= 4"));
     }
+    validate_nonnegative_finite("probe_radius", probe_radius)?;
     Ok(sasa::compute(
         &coords,
         &atom_names,
@@ -190,6 +201,7 @@ fn count_hbonds(
             "coords_b, atom_names_b, residue_names_b must all have the same length",
         ));
     }
+    validate_nonnegative_finite("cutoff", cutoff)?;
     Ok(hbonds::count(
         &coords_a,
         &atom_names_a,
@@ -229,6 +241,7 @@ fn count_salt_bridges(
             "coords_b, atom_names_b, residue_names_b must all have the same length",
         ));
     }
+    validate_nonnegative_finite("cutoff", cutoff)?;
     Ok(salt_bridges::count(
         &coords_a,
         &atom_names_a,
@@ -262,6 +275,7 @@ fn compute_sasa_batch(
     if n_points < 4 {
         return Err(PyValueError::new_err("n_points must be >= 4"));
     }
+    validate_nonnegative_finite("probe_radius", probe_radius)?;
     for (i, (c, an, rn)) in structures.iter().enumerate() {
         if an.len() != c.len() || rn.len() != c.len() {
             return Err(PyValueError::new_err(format!(

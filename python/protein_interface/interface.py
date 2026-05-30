@@ -36,6 +36,7 @@ Combined:
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -179,13 +180,17 @@ class AtomArrays:
     residue_names: list[str]
     residue_ids: list[tuple]  # (chain_id, resseq, icode) per atom; legacy 2-tuples accepted
     bfactors: list[float] | None = None  # per-atom B-factor (= pLDDT for AF2/3, BoltzGen)
+    _allow_side_qualified: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self.residue_ids = [_normalize_residue_id(rid) for rid in self.residue_ids]
+        self.residue_ids = [
+            _normalize_residue_id(rid, allow_side_qualified=self._allow_side_qualified)
+            for rid in self.residue_ids
+        ]
 
 
-def _normalize_residue_id(rid: tuple) -> tuple:
-    """Normalize residue IDs while preserving internal side-qualified keys."""
+def _normalize_residue_id(rid: tuple, *, allow_side_qualified: bool = False) -> tuple:
+    """Normalize public residue IDs; side-qualified keys are internal only."""
     if len(rid) == 2:
         chain, resseq = rid
         return (str(chain), int(resseq), "")
@@ -193,11 +198,15 @@ def _normalize_residue_id(rid: tuple) -> tuple:
         chain, resseq, icode = rid
         return (str(chain), int(resseq), str(icode).strip())
     if len(rid) == 4 and rid[0] in ("a", "b"):
+        if not allow_side_qualified:
+            raise ValueError(
+                "side-qualified residue IDs are internal-only; use "
+                "(chain, resseq) or (chain, resseq, icode)"
+            )
         side, chain, resseq, icode = rid
         return (side, str(chain), int(resseq), str(icode).strip())
     raise ValueError(
-        "residue IDs must be (chain, resseq), (chain, resseq, icode), "
-        "or internal (side, chain, resseq, icode)"
+        "residue IDs must be (chain, resseq) or (chain, resseq, icode)"
     )
 
 
@@ -239,6 +248,27 @@ def _validate_known_sasa_radii(atoms: AtomArrays, label: str) -> None:
         raise ValueError(f"{label} contains atoms with no SASA radius: {examples}{extra}")
 
 
+def _validate_nonnegative_finite(name: str, value: float) -> None:
+    try:
+        v = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite non-negative number") from exc
+    if not math.isfinite(v) or v < 0.0:
+        raise ValueError(f"{name} must be a finite non-negative number")
+
+
+def _validate_n_points(n_points: int) -> None:
+    if isinstance(n_points, bool) or not isinstance(n_points, int):
+        raise ValueError("n_points must be an integer >= 4")
+    if n_points < 4:
+        raise ValueError("n_points must be an integer >= 4")
+
+
+def _validate_sasa_params(probe_radius: float, n_points: int) -> None:
+    _validate_nonnegative_finite("probe_radius", probe_radius)
+    _validate_n_points(n_points)
+
+
 def _validate_for_sasa(a: AtomArrays, b: AtomArrays | None = None, *, strict: bool) -> None:
     _validate_atom_arrays(a, "atoms_a", require_nonempty=strict)
     if strict:
@@ -251,42 +281,68 @@ def _validate_for_sasa(a: AtomArrays, b: AtomArrays | None = None, *, strict: bo
 
 @dataclass
 class InterfaceResult:
-    sc: float                         # Lawrence-Colman shape complementarity (-1 to 1); NaN if disabled or failed
-    dsasa: float
-    n_interface_a: int
-    n_interface_b: int
-    aromatic_dsasa_fraction: float
-    hbonds: int
-    salt_bridges: int
-    bhsa: float                       # buried hydrophobic surface area (Å²)
-    bpsa: float                       # buried polar surface area (Å²)
-    bcsa: float                       # buried charged surface area (Å²)
-    hydrophobic_fraction: float       # bhsa / dsasa
-    hbond_density: float              # hbonds per 100 Å² of dsasa
-    pi_pi: int
-    cation_pi: int
-    buried_unsat_polar: int
-    planarity_rmsd: float             # Å, RMS distance to best-fit plane
-    elongation: float                 # σ1 / σ2 (≥ 1; large = elongated)
-    planarity_ratio: float            # σ3 / σ2 (≤ 1; small = flat)
-    dsasa_a: float                    # buried area on side A only (Å²)
-    dsasa_b: float                    # buried area on side B only (Å²)
-    asymmetry: float                  # |dsasa_a − dsasa_b| / max(dsasa_a, dsasa_b); 0 = symmetric
-    atomic_contacts: int              # cross-interface heavy-atom pairs within 5 Å
-    interface_depth: float            # Å, between A-side and B-side interface centroids
-    disulfides: int                   # cross-interface Cys SG–SG pairs
-    gly_pro_fraction: float           # (Gly + Pro) / total interface residues
-    bb_dsasa: float                   # backbone buried surface area (Å²)
-    sc_dsasa: float                   # side-chain buried surface area (Å²)
-    sidechain_fraction: float         # sc_dsasa / dsasa
-    charge_a: int                     # net formal charge over interface residues, side A
-    charge_b: int                     # net formal charge over interface residues, side B
-    charge_complementarity: float     # −charge_a × charge_b; positive = opposing signs
-    mean_bfactor_interface: float     # mean B-factor (= pLDDT) over interface atoms; NaN if absent
-    min_bfactor_interface: float      # min B-factor over interface atoms; NaN if absent
-    prodigy_dg: float                 # predicted binding ΔG (kcal/mol), Vangone & Bonvin 2015
-    hotspots_a: list[tuple[str, int, str]] = field(default_factory=list)
-    hotspots_b: list[tuple[str, int, str]] = field(default_factory=list)
+    sc: float | None                         # Lawrence-Colman shape complementarity (-1 to 1); NaN if failed permissively
+    dsasa: float | None
+    n_interface_a: int | None
+    n_interface_b: int | None
+    aromatic_dsasa_fraction: float | None
+    hbonds: int | None
+    salt_bridges: int | None
+    bhsa: float | None                       # buried hydrophobic surface area (Å²)
+    bpsa: float | None                       # buried polar surface area (Å²)
+    bcsa: float | None                       # buried charged surface area (Å²)
+    hydrophobic_fraction: float | None       # bhsa / dsasa
+    hbond_density: float | None              # hbonds per 100 Å² of dsasa
+    pi_pi: int | None
+    cation_pi: int | None
+    buried_unsat_polar: int | None
+    planarity_rmsd: float | None             # Å, RMS distance to best-fit plane
+    elongation: float | None                 # σ1 / σ2 (≥ 1; large = elongated)
+    planarity_ratio: float | None            # σ3 / σ2 (≤ 1; small = flat)
+    dsasa_a: float | None                    # buried area on side A only (Å²)
+    dsasa_b: float | None                    # buried area on side B only (Å²)
+    asymmetry: float | None                  # |dsasa_a − dsasa_b| / max(dsasa_a, dsasa_b); 0 = symmetric
+    atomic_contacts: int | None              # cross-interface heavy-atom pairs within 5 Å
+    interface_depth: float | None            # Å, between A-side and B-side interface centroids
+    disulfides: int | None                   # cross-interface Cys SG–SG pairs
+    gly_pro_fraction: float | None           # (Gly + Pro) / total interface residues
+    bb_dsasa: float | None                   # backbone buried surface area (Å²)
+    sc_dsasa: float | None                   # side-chain buried surface area (Å²)
+    sidechain_fraction: float | None         # sc_dsasa / dsasa
+    charge_a: int | None                     # net formal charge over interface residues, side A
+    charge_b: int | None                     # net formal charge over interface residues, side B
+    charge_complementarity: float | None     # −charge_a × charge_b; positive = opposing signs
+    mean_bfactor_interface: float | None     # mean B-factor (= pLDDT) over interface atoms; NaN if absent
+    min_bfactor_interface: float | None      # min B-factor over interface atoms; NaN if absent
+    prodigy_dg: float | None                 # predicted binding ΔG (kcal/mol), Vangone & Bonvin 2015
+    hotspots_a: list[tuple[str, int, str]] | None = field(default_factory=list)
+    hotspots_b: list[tuple[str, int, str]] | None = field(default_factory=list)
+
+
+ANALYZE_METRICS = frozenset(InterfaceResult.__dataclass_fields__)
+_SASA_ANALYZE_METRICS = frozenset({
+    "dsasa", "dsasa_a", "dsasa_b", "asymmetry",
+    "aromatic_dsasa_fraction", "bhsa", "bpsa", "bcsa", "hydrophobic_fraction",
+    "bb_dsasa", "sc_dsasa", "sidechain_fraction",
+    "hbond_density", "buried_unsat_polar",
+    "planarity_rmsd", "elongation", "planarity_ratio", "interface_depth",
+    "mean_bfactor_interface", "min_bfactor_interface",
+    "hotspots_a", "hotspots_b", "prodigy_dg",
+})
+
+
+def _resolve_analyze_metrics(
+    metrics: Iterable[str] | None,
+    skip_metrics: Iterable[str] | None,
+) -> frozenset[str]:
+    selected = set(ANALYZE_METRICS if metrics is None else metrics)
+    skipped = set(() if skip_metrics is None else skip_metrics)
+    unknown = (selected | skipped) - ANALYZE_METRICS
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        valid = ", ".join(sorted(ANALYZE_METRICS))
+        raise ValueError(f"unknown analyze metric(s): {names}; valid metrics are: {valid}")
+    return frozenset(selected - skipped)
 
 
 # ── Loaders ──────────────────────────────────────────────────────────────────
@@ -344,6 +400,7 @@ def sasa(
     strict: bool = True,
 ) -> list[float]:
     """Per-atom SASA in Å². Thin wrapper around the Rust kernel."""
+    _validate_sasa_params(probe_radius, n_points)
     _validate_for_sasa(atoms, strict=strict)
     return compute_sasa(atoms.coords, atoms.atom_names, atoms.residue_names, probe_radius, n_points)
 
@@ -355,6 +412,7 @@ def _combined(a: AtomArrays, b: AtomArrays) -> AtomArrays:
         a.residue_names + b.residue_names,
         [_side_residue_id("a", rid) for rid in a.residue_ids]
         + [_side_residue_id("b", rid) for rid in b.residue_ids],
+        _allow_side_qualified=True,
     )
 
 
@@ -366,6 +424,7 @@ def delta_sasa(
     strict: bool = True,
 ) -> float:
     """Buried surface area on binding: SASA(A alone) + SASA(B alone) − SASA(A+B)."""
+    _validate_sasa_params(probe_radius, n_points)
     _validate_for_sasa(a, b, strict=strict)
     sasa_a = sasa(a, probe_radius, n_points, strict=strict)
     sasa_b = sasa(b, probe_radius, n_points, strict=strict)
@@ -390,6 +449,7 @@ def interface_residues(
     of any heavy atom on the other side. Uses a numpy distance matrix
     (memory ≈ 8·N_a·N_b bytes; ~18 MB for a 1500×1500 complex).
     """
+    _validate_nonnegative_finite("cutoff", cutoff)
     if not a.coords or not b.coords:
         return set(), set()
     A = np.asarray(a.coords)
@@ -425,6 +485,7 @@ def aromatic_dsasa_fraction(
     strict: bool = True,
 ) -> float:
     """Fraction of buried surface area contributed by aromatic residues (F/Y/W/H)."""
+    _validate_sasa_params(probe_radius, n_points)
     _validate_for_sasa(a, b, strict=strict)
     sasa_a = sasa(a, probe_radius, n_points, strict=strict)
     sasa_b = sasa(b, probe_radius, n_points, strict=strict)
@@ -450,6 +511,7 @@ def hbonds(
     cutoff: float = 3.5,
 ) -> int:
     """Cross-interface H-bond count (distance-only criterion). Thin wrapper around the Rust kernel."""
+    _validate_nonnegative_finite("cutoff", cutoff)
     return count_hbonds(
         a.coords, a.atom_names, a.residue_names,
         b.coords, b.atom_names, b.residue_names,
@@ -466,6 +528,7 @@ def salt_bridges(a: AtomArrays, b: AtomArrays, cutoff: float = 4.0) -> int:
     (Asp/Glu) and any basic side-chain nitrogen (Lys/Arg/His) across the
     interface lie within `cutoff` Å.
     """
+    _validate_nonnegative_finite("cutoff", cutoff)
     pairs: set[tuple[tuple, tuple]] = set()
     cutoff2 = cutoff * cutoff
     for i, ca in enumerate(a.coords):
@@ -491,6 +554,7 @@ def atomic_contacts(a: AtomArrays, b: AtomArrays, cutoff: float = 5.0) -> int:
     A density proxy for the interface — independent of SASA and chemistry.
     Uses a numpy broadcast (O(N·M)); fine for typical complex sizes.
     """
+    _validate_nonnegative_finite("cutoff", cutoff)
     A = np.asarray(a.coords)
     B = np.asarray(b.coords)
     if A.size == 0 or B.size == 0:
@@ -506,6 +570,7 @@ def disulfide_bridges(a: AtomArrays, b: AtomArrays, cutoff: float = 2.5) -> int:
     a bit of distortion. Disulfide bridges across protein-protein interfaces
     are rare outside engineered systems, but useful to count when present.
     """
+    _validate_nonnegative_finite("cutoff", cutoff)
     sg_a = [np.asarray(a.coords[i]) for i in range(len(a.coords))
             if a.residue_names[i] == "CYS" and a.atom_names[i] == "SG"]
     sg_b = [np.asarray(b.coords[i]) for i in range(len(b.coords))
@@ -526,6 +591,7 @@ def asymmetry(
         asymmetry = |dsasa_a − dsasa_b| / max(dsasa_a, dsasa_b)
         0 = perfectly symmetric, 1 = totally one-sided.
     """
+    _validate_sasa_params(probe_radius, n_points)
     sasa_a = sasa(a, probe_radius, n_points)
     sasa_b = sasa(b, probe_radius, n_points)
     combined = _combined(a, b)
@@ -557,6 +623,8 @@ def interface_depth(
 
     Returns NaN if either side has no qualifying atom.
     """
+    _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("min_atom_dsasa", min_atom_dsasa)
     combined, sasa_c, sasa_s = _per_atom_dsasa(a, b, probe_radius, n_points, strict=strict)
     d = sasa_s - sasa_c
     na = len(a.coords)
@@ -580,6 +648,7 @@ def gly_pro_fraction(
     `interface_residues`). High values indicate a flexible/kinked interface
     (Gly removes a side chain; Pro restricts backbone φ).
     """
+    _validate_nonnegative_finite("cutoff", cutoff)
     int_a, int_b = interface_residues(a, b, cutoff)
     res_name_a = {a.residue_ids[i]: a.residue_names[i] for i in range(len(a.coords))}
     res_name_b = {b.residue_ids[i]: b.residue_names[i] for i in range(len(b.coords))}
@@ -608,6 +677,8 @@ def confidence_at_interface(
     Returns a dict with keys 'mean' and 'min'. Both are NaN if either atom
     array lacks `bfactors` or no atom is sufficiently buried.
     """
+    _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("min_atom_dsasa", min_atom_dsasa)
     nan = {"mean": float("nan"), "min": float("nan")}
     if a.bfactors is None or b.bfactors is None:
         return nan
@@ -637,6 +708,7 @@ def bb_sc_dsasa_split(
     Backbone atoms: N, CA, C, O, OXT. Returns a dict with keys 'bb_dsasa',
     'sc_dsasa', 'sidechain_fraction'.
     """
+    _validate_sasa_params(probe_radius, n_points)
     combined, sasa_c, sasa_s = _per_atom_dsasa(a, b, probe_radius, n_points, strict=strict)
     d = sasa_s - sasa_c
     bb = 0.0
@@ -670,6 +742,7 @@ def charge_complementarity(
                              negative = same sign (electrostatically clashing),
                              zero = at least one side is uncharged.
     """
+    _validate_nonnegative_finite("cutoff", cutoff)
     int_a, int_b = interface_residues(a, b, cutoff)
     res_name_a = {a.residue_ids[i]: a.residue_names[i] for i in range(len(a.coords))}
     res_name_b = {b.residue_ids[i]: b.residue_names[i] for i in range(len(b.coords))}
@@ -729,6 +802,7 @@ def prodigy_ics(
     Returns a dict with keys CC, AC, AP, AA, PP, CP and `total`.
     Non-standard residues are skipped.
     """
+    _validate_nonnegative_finite("cutoff", cutoff)
     if not a.coords or not b.coords:
         return {"CC": 0, "AC": 0, "AP": 0, "AA": 0, "PP": 0, "CP": 0, "total": 0}
     A = np.asarray(a.coords)
@@ -754,6 +828,7 @@ def _nis_from_arrays(
     bound complex AND not at the interface. Residue rSASA = sum of per-atom
     complex SASA divided by the Tien et al. 2013 reference for that residue.
     """
+    _validate_nonnegative_finite("rsasa_cutoff", rsasa_cutoff)
     per_res: dict[tuple, float] = {}
     per_res_name: dict[tuple, str] = {}
     for i, rid in enumerate(combined.residue_ids):
@@ -805,6 +880,9 @@ def prodigy_nis(
     Interface = residues with any heavy atom within `cutoff` Å of the opposite
     chain (5.5 Å is the PRODIGY convention).
     """
+    _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("cutoff", cutoff)
+    _validate_nonnegative_finite("rsasa_cutoff", rsasa_cutoff)
     combined, sasa_c, _ = _per_atom_dsasa(a, b, probe_radius, n_points, strict=strict)
     int_a, int_b = interface_residues(a, b, cutoff)
     interface_rids = (
@@ -841,6 +919,9 @@ def prodigy(
     (`nis`), and the predicted `dg` in kcal/mol. More negative = tighter
     predicted binding.
     """
+    _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("cutoff", cutoff)
+    _validate_nonnegative_finite("rsasa_cutoff", rsasa_cutoff)
     ics = prodigy_ics(a, b, cutoff)
     nis = prodigy_nis(a, b, probe_radius, n_points, cutoff, rsasa_cutoff, strict=strict)
     return {"ics": ics, "nis": nis, "dg": _prodigy_dg_from_parts(ics, nis)}
@@ -858,6 +939,7 @@ def _per_atom_dsasa(
 ):
     """Return (combined, sasa_complex, sasa_separated) — used by metrics that
     re-slice dSASA by atom class. Computes SASA three times."""
+    _validate_sasa_params(probe_radius, n_points)
     _validate_for_sasa(a, b, strict=strict)
     sasa_a = sasa(a, probe_radius, n_points, strict=strict)
     sasa_b = sasa(b, probe_radius, n_points, strict=strict)
@@ -883,6 +965,7 @@ def bsa_breakdown(
 
     Returns a dict with keys 'dsasa', 'bhsa', 'bpsa', 'bcsa', 'hydrophobic_fraction'.
     """
+    _validate_sasa_params(probe_radius, n_points)
     combined, sasa_c, sasa_s = _per_atom_dsasa(a, b, probe_radius, n_points, strict=strict)
     d = sasa_s - sasa_c
     bhsa = 0.0
@@ -915,6 +998,7 @@ def per_residue_dsasa(
     strict: bool = True,
 ) -> dict[tuple[str, str, int, str], float]:
     """Per-residue buried surface area keyed by (side, chain_id, resseq, icode)."""
+    _validate_sasa_params(probe_radius, n_points)
     combined, sasa_c, sasa_s = _per_atom_dsasa(a, b, probe_radius, n_points, strict=strict)
     out: dict[tuple[str, str, int, str], float] = {}
     d = sasa_s - sasa_c
@@ -991,6 +1075,8 @@ def pi_pi_contacts(
     90° accepts both face-to-face and T-shaped geometries). Reference geometric
     range follows McGaughey et al. 1998.
     """
+    _validate_nonnegative_finite("distance_cutoff", distance_cutoff)
+    _validate_nonnegative_finite("angle_cutoff_deg", angle_cutoff_deg)
     rings_a = _aromatic_rings(a)
     rings_b = _aromatic_rings(b)
     cos_min = math.cos(math.radians(angle_cutoff_deg))
@@ -1018,6 +1104,7 @@ def cation_pi_contacts(
     when the cation lies within `distance_cutoff` Å of a centroid on the other
     side. Reference range follows Gallivan & Dougherty 1999 (~3.4–6.0 Å).
     """
+    _validate_nonnegative_finite("distance_cutoff", distance_cutoff)
     def _cations(arr: AtomArrays):
         for i, name in enumerate(arr.atom_names):
             r = arr.residue_names[i]
@@ -1064,6 +1151,9 @@ def buried_unsat_polar(
     partners are not considered — if an atom were satisfied intramolecularly in
     the unbound state, it would not normally meet the burial-gain criterion.
     """
+    _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("sasa_cutoff", sasa_cutoff)
+    _validate_nonnegative_finite("hbond_cutoff", hbond_cutoff)
     combined, sasa_c, sasa_s = _per_atom_dsasa(a, b, probe_radius, n_points, strict=strict)
     d = sasa_s - sasa_c
     return _buried_unsat_from_arrays(
@@ -1093,6 +1183,8 @@ def interface_shape(
 
     Returns NaN values when fewer than 3 interface atoms are present.
     """
+    _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("min_atom_dsasa", min_atom_dsasa)
     combined, sasa_c, sasa_s = _per_atom_dsasa(a, b, probe_radius, n_points, strict=strict)
     d = sasa_s - sasa_c
     mask = d >= min_atom_dsasa
@@ -1145,6 +1237,8 @@ def analyze(
     include_sc: bool = True,
     sc_parallel: bool = True,
     strict: bool = True,
+    metrics: Iterable[str] | None = None,
+    skip_metrics: Iterable[str] | None = None,
 ) -> InterfaceResult:
     """Compute all interface metrics in one pass.
 
@@ -1164,17 +1258,41 @@ def analyze(
     complexes at once see :func:`analyze_batch`, which batches all SASA work
     into a single parallel Rust call.
     """
-    _validate_for_sasa(a, b, strict=strict)
-    sasa_a = sasa(a, probe_radius, n_points, strict=strict)
-    sasa_b = sasa(b, probe_radius, n_points, strict=strict)
+    enabled_metrics = _resolve_analyze_metrics(metrics, skip_metrics)
+    needs_sasa = bool(enabled_metrics & _SASA_ANALYZE_METRICS)
+    if needs_sasa:
+        _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("interface_cutoff", interface_cutoff)
+    _validate_nonnegative_finite("hbond_cutoff", hbond_cutoff)
+    _validate_nonnegative_finite("salt_bridge_cutoff", salt_bridge_cutoff)
+    _validate_nonnegative_finite("pi_pi_distance", pi_pi_distance)
+    _validate_nonnegative_finite("cation_pi_distance", cation_pi_distance)
+    _validate_nonnegative_finite("hotspot_threshold", hotspot_threshold)
+    _validate_nonnegative_finite("unsat_sasa_cutoff", unsat_sasa_cutoff)
+    _validate_nonnegative_finite("min_atom_dsasa_for_shape", min_atom_dsasa_for_shape)
+    if needs_sasa:
+        _validate_for_sasa(a, b, strict=strict)
+    else:
+        _validate_atom_arrays(a, "atoms_a", require_nonempty=strict)
+        _validate_atom_arrays(b, "atoms_b", require_nonempty=strict)
     combined = _combined(a, b)
-    sasa_ab = compute_sasa(
-        combined.coords, combined.atom_names, combined.residue_names, probe_radius, n_points
+    if needs_sasa:
+        sasa_a = sasa(a, probe_radius, n_points, strict=strict)
+        sasa_b = sasa(b, probe_radius, n_points, strict=strict)
+        sasa_ab = compute_sasa(
+            combined.coords, combined.atom_names, combined.residue_names, probe_radius, n_points
+        )
+    else:
+        sasa_a = sasa_b = sasa_ab = None
+    sc_value = (
+        _compute_sc_value(a, b, sc_parallel, strict=strict)
+        if include_sc and "sc" in enabled_metrics
+        else (float("nan") if "sc" in enabled_metrics else None)
     )
-    sc_value = _compute_sc_value(a, b, sc_parallel, strict=strict) if include_sc else float("nan")
     return _analyze_from_sasa(
         a, b, combined, sasa_a, sasa_b, sasa_ab,
         sc_value=sc_value,
+        enabled_metrics=enabled_metrics,
         interface_cutoff=interface_cutoff,
         hbond_cutoff=hbond_cutoff,
         salt_bridge_cutoff=salt_bridge_cutoff,
@@ -1201,6 +1319,8 @@ def analyze_batch(
     min_atom_dsasa_for_shape: float = 0.5,
     include_sc: bool = True,
     strict: bool = True,
+    metrics: Iterable[str] | None = None,
+    skip_metrics: Iterable[str] | None = None,
 ) -> list[InterfaceResult]:
     """Analyse many complexes with a single batched SASA call.
 
@@ -1217,33 +1337,57 @@ def analyze_batch(
     Args mirror :func:`analyze`. Returns one :class:`InterfaceResult` per input
     complex, in order.
     """
+    enabled_metrics = _resolve_analyze_metrics(metrics, skip_metrics)
+    needs_sasa = bool(enabled_metrics & _SASA_ANALYZE_METRICS)
+    if needs_sasa:
+        _validate_sasa_params(probe_radius, n_points)
+    _validate_nonnegative_finite("interface_cutoff", interface_cutoff)
+    _validate_nonnegative_finite("hbond_cutoff", hbond_cutoff)
+    _validate_nonnegative_finite("salt_bridge_cutoff", salt_bridge_cutoff)
+    _validate_nonnegative_finite("pi_pi_distance", pi_pi_distance)
+    _validate_nonnegative_finite("cation_pi_distance", cation_pi_distance)
+    _validate_nonnegative_finite("hotspot_threshold", hotspot_threshold)
+    _validate_nonnegative_finite("unsat_sasa_cutoff", unsat_sasa_cutoff)
+    _validate_nonnegative_finite("min_atom_dsasa_for_shape", min_atom_dsasa_for_shape)
     if not complexes:
         return []
     for i, (a, b) in enumerate(complexes):
         try:
-            _validate_for_sasa(a, b, strict=strict)
+            if needs_sasa:
+                _validate_for_sasa(a, b, strict=strict)
+            else:
+                _validate_atom_arrays(a, "atoms_a", require_nonempty=strict)
+                _validate_atom_arrays(b, "atoms_b", require_nonempty=strict)
         except ValueError as exc:
             raise ValueError(f"complex {i}: {exc}") from exc
 
     combineds = [_combined(a, b) for a, b in complexes]
-    inputs: list[tuple[list[list[float]], list[str], list[str]]] = []
-    for (a, b), combined in zip(complexes, combineds):
-        inputs.append((a.coords, a.atom_names, a.residue_names))
-        inputs.append((b.coords, b.atom_names, b.residue_names))
-        inputs.append((combined.coords, combined.atom_names, combined.residue_names))
-    all_sasa = compute_sasa_batch(inputs, probe_radius, n_points, parallel)
+    if needs_sasa:
+        inputs: list[tuple[list[list[float]], list[str], list[str]]] = []
+        for (a, b), combined in zip(complexes, combineds):
+            inputs.append((a.coords, a.atom_names, a.residue_names))
+            inputs.append((b.coords, b.atom_names, b.residue_names))
+            inputs.append((combined.coords, combined.atom_names, combined.residue_names))
+        all_sasa = compute_sasa_batch(inputs, probe_radius, n_points, parallel)
+    else:
+        all_sasa = []
 
     results: list[InterfaceResult] = []
     for i, (a, b) in enumerate(complexes):
-        sasa_a = all_sasa[3 * i]
-        sasa_b = all_sasa[3 * i + 1]
-        sasa_ab = all_sasa[3 * i + 2]
+        sasa_a = all_sasa[3 * i] if needs_sasa else None
+        sasa_b = all_sasa[3 * i + 1] if needs_sasa else None
+        sasa_ab = all_sasa[3 * i + 2] if needs_sasa else None
         # SC's internal Rayon mirrors the batch parallel flag — when the caller
         # is inside a ProcessPool (parallel=False), keep SC single-threaded too.
-        sc_value = _compute_sc_value(a, b, parallel, strict=strict) if include_sc else float("nan")
+        sc_value = (
+            _compute_sc_value(a, b, parallel, strict=strict)
+            if include_sc and "sc" in enabled_metrics
+            else (float("nan") if "sc" in enabled_metrics else None)
+        )
         results.append(_analyze_from_sasa(
             a, b, combineds[i], sasa_a, sasa_b, sasa_ab,
             sc_value=sc_value,
+            enabled_metrics=enabled_metrics,
             interface_cutoff=interface_cutoff,
             hbond_cutoff=hbond_cutoff,
             salt_bridge_cutoff=salt_bridge_cutoff,
@@ -1260,11 +1404,12 @@ def _analyze_from_sasa(
     a: AtomArrays,
     b: AtomArrays,
     combined: AtomArrays,
-    sasa_a: list[float],
-    sasa_b: list[float],
-    sasa_ab: list[float],
+    sasa_a: list[float] | None,
+    sasa_b: list[float] | None,
+    sasa_ab: list[float] | None,
     *,
-    sc_value: float,
+    sc_value: float | None,
+    enabled_metrics: frozenset[str],
     interface_cutoff: float,
     hbond_cutoff: float,
     salt_bridge_cutoff: float,
@@ -1275,176 +1420,233 @@ def _analyze_from_sasa(
     min_atom_dsasa_for_shape: float,
 ) -> InterfaceResult:
     """Internal orchestrator: assemble an InterfaceResult from pre-computed SASA arrays."""
-    sasa_c = np.asarray(sasa_ab)
-    sasa_s = np.asarray(sasa_a + sasa_b)
-    d = sasa_s - sasa_c
+    def enabled(name: str) -> bool:
+        return name in enabled_metrics
+
+    needs_sasa = bool(enabled_metrics & _SASA_ANALYZE_METRICS)
+    if needs_sasa:
+        if sasa_a is None or sasa_b is None or sasa_ab is None:
+            raise ValueError("SASA arrays are required for the selected analyze metrics")
+        sasa_c = np.asarray(sasa_ab)
+        sasa_s = np.asarray(sasa_a + sasa_b)
+        d = sasa_s - sasa_c
+    else:
+        sasa_c = np.asarray([])
+        d = np.asarray([])
 
     # dSASA decompositions in a single sweep.
-    dsasa_total = float(d.sum())
-    arom = 0.0
-    bhsa = 0.0
-    bpsa = 0.0
-    bcsa = 0.0
-    bb_d = 0.0
-    sc_d = 0.0
-    per_res: dict[tuple, float] = {}
-    for i, rname in enumerate(combined.residue_names):
-        di = float(d[i])
-        rid = combined.residue_ids[i]
-        per_res[rid] = per_res.get(rid, 0.0) + di
-        if rname in AROMATIC:
-            arom += di
-        aname = combined.atom_names[i]
-        if aname in BACKBONE_ATOMS:
-            bb_d += di
-        else:
-            sc_d += di
-        first = aname[:1]
-        if first in ("C", "S"):
-            bhsa += di
-        elif first in ("N", "O"):
-            bpsa += di
-            if (rname, aname) in CHARGED_ATOMS:
-                bcsa += di
-
-    hotspots = [rid for rid, v in sorted(per_res.items(), key=lambda kv: -kv[1]) if v >= hotspot_threshold]
     na_atoms = len(a.coords)
-    hs_a = [_strip_side_residue_id(rid) for rid in hotspots if rid[0] == "a"]
-    hs_b = [_strip_side_residue_id(rid) for rid in hotspots if rid[0] == "b"]
+    dsasa_total = arom = bhsa = bpsa = bcsa = bb_d = sc_d = None
+    d_a = d_b = asym = None
+    hs_a = hs_b = None
+    if needs_sasa:
+        dsasa_total = float(d.sum())
+        arom = bhsa = bpsa = bcsa = bb_d = sc_d = 0.0
+        per_res: dict[tuple, float] = {}
+        for i, rname in enumerate(combined.residue_names):
+            di = float(d[i])
+            rid = combined.residue_ids[i]
+            per_res[rid] = per_res.get(rid, 0.0) + di
+            if rname in AROMATIC:
+                arom += di
+            aname = combined.atom_names[i]
+            if aname in BACKBONE_ATOMS:
+                bb_d += di
+            else:
+                sc_d += di
+            first = aname[:1]
+            if first in ("C", "S"):
+                bhsa += di
+            elif first in ("N", "O"):
+                bpsa += di
+                if (rname, aname) in CHARGED_ATOMS:
+                    bcsa += di
 
-    int_a_set, int_b_set = interface_residues(a, b, interface_cutoff)
-    n_a, n_b = len(int_a_set), len(int_b_set)
-    n_hb = hbonds(a, b, hbond_cutoff)
-    n_sb = salt_bridges(a, b, salt_bridge_cutoff)
+        hotspots = [rid for rid, v in sorted(per_res.items(), key=lambda kv: -kv[1]) if v >= hotspot_threshold]
+        hs_a = [_strip_side_residue_id(rid) for rid in hotspots if rid[0] == "a"]
+        hs_b = [_strip_side_residue_id(rid) for rid in hotspots if rid[0] == "b"]
+        d_a = float(d[:na_atoms].sum())
+        d_b = float(d[na_atoms:].sum())
+        m_ab = max(d_a, d_b)
+        asym = abs(d_a - d_b) / m_ab if m_ab > 0 else 0.0
+
+    needs_interface_residues = any(enabled(m) for m in (
+        "n_interface_a", "n_interface_b", "gly_pro_fraction",
+        "charge_a", "charge_b", "charge_complementarity",
+    ))
+    if needs_interface_residues:
+        int_a_set, int_b_set = interface_residues(a, b, interface_cutoff)
+        n_a, n_b = len(int_a_set), len(int_b_set)
+    else:
+        int_a_set, int_b_set = set(), set()
+        n_a = n_b = None
+
+    n_hb = hbonds(a, b, hbond_cutoff) if (enabled("hbonds") or enabled("hbond_density")) else None
+    n_sb = salt_bridges(a, b, salt_bridge_cutoff) if enabled("salt_bridges") else None
 
     # Gly+Pro fraction over the same interface-residue set.
     res_name_a = {a.residue_ids[i]: a.residue_names[i] for i in range(na_atoms)}
     res_name_b = {b.residue_ids[i]: b.residue_names[i] for i in range(len(b.coords))}
-    int_total = n_a + n_b
-    gp_count = sum(1 for r in int_a_set if res_name_a.get(r) in ("GLY", "PRO"))
-    gp_count += sum(1 for r in int_b_set if res_name_b.get(r) in ("GLY", "PRO"))
-    gp_frac = (gp_count / int_total) if int_total > 0 else 0.0
+    if enabled("gly_pro_fraction"):
+        int_total = len(int_a_set) + len(int_b_set)
+        gp_count = sum(1 for r in int_a_set if res_name_a.get(r) in ("GLY", "PRO"))
+        gp_count += sum(1 for r in int_b_set if res_name_b.get(r) in ("GLY", "PRO"))
+        gp_frac = (gp_count / int_total) if int_total > 0 else 0.0
+    else:
+        gp_frac = None
 
     # Formal-charge sums over interface residues.
-    qa = sum(RESIDUE_CHARGE.get(res_name_a.get(r, ""), 0) for r in int_a_set)
-    qb = sum(RESIDUE_CHARGE.get(res_name_b.get(r, ""), 0) for r in int_b_set)
-    charge_compl = float(-qa * qb)
-
-    # Per-side dSASA and asymmetry from the d array already computed.
-    d_a = float(d[:na_atoms].sum())
-    d_b = float(d[na_atoms:].sum())
-    m_ab = max(d_a, d_b)
-    asym = abs(d_a - d_b) / m_ab if m_ab > 0 else 0.0
+    if enabled("charge_a") or enabled("charge_b") or enabled("charge_complementarity"):
+        qa_value = sum(RESIDUE_CHARGE.get(res_name_a.get(r, ""), 0) for r in int_a_set)
+        qb_value = sum(RESIDUE_CHARGE.get(res_name_b.get(r, ""), 0) for r in int_b_set)
+        charge_compl = float(-qa_value * qb_value)
+        qa = qa_value if enabled("charge_a") or enabled("charge_complementarity") else None
+        qb = qb_value if enabled("charge_b") or enabled("charge_complementarity") else None
+    else:
+        qa = qb = charge_compl = None
 
     # Disulfides — Cys SG–SG pairs across the interface.
-    sg_a = [np.asarray(a.coords[i]) for i in range(na_atoms)
-            if a.residue_names[i] == "CYS" and a.atom_names[i] == "SG"]
-    sg_b = [np.asarray(b.coords[i]) for i in range(len(b.coords))
-            if b.residue_names[i] == "CYS" and b.atom_names[i] == "SG"]
-    ssbond = sum(1 for x in sg_a for y in sg_b if float((x - y) @ (x - y)) <= 2.5 * 2.5)
+    if enabled("disulfides"):
+        sg_a = [np.asarray(a.coords[i]) for i in range(na_atoms)
+                if a.residue_names[i] == "CYS" and a.atom_names[i] == "SG"]
+        sg_b = [np.asarray(b.coords[i]) for i in range(len(b.coords))
+                if b.residue_names[i] == "CYS" and b.atom_names[i] == "SG"]
+        ssbond = sum(1 for x in sg_a for y in sg_b if float((x - y) @ (x - y)) <= 2.5 * 2.5)
+    else:
+        ssbond = None
 
     # Atomic contact count via numpy broadcast.
-    A_xyz = np.asarray(a.coords, dtype=float).reshape((len(a.coords), 3))
-    B_xyz = np.asarray(b.coords, dtype=float).reshape((len(b.coords), 3))
-    if len(a.coords) == 0 or len(b.coords) == 0:
-        contact_d2 = np.zeros((len(a.coords), len(b.coords)), dtype=float)
+    needs_xyz = needs_sasa or enabled("atomic_contacts") or enabled("prodigy_dg")
+    A_xyz = np.asarray(a.coords, dtype=float).reshape((len(a.coords), 3)) if needs_xyz else None
+    B_xyz = np.asarray(b.coords, dtype=float).reshape((len(b.coords), 3)) if needs_xyz else None
+    if enabled("atomic_contacts") or enabled("prodigy_dg"):
+        if len(a.coords) == 0 or len(b.coords) == 0:
+            contact_d2 = np.zeros((len(a.coords), len(b.coords)), dtype=float)
+        else:
+            contact_d2 = ((A_xyz[:, None, :] - B_xyz[None, :, :]) ** 2).sum(-1)
     else:
-        contact_d2 = ((A_xyz[:, None, :] - B_xyz[None, :, :]) ** 2).sum(-1)
-    n_contacts = int((contact_d2 <= interface_cutoff * interface_cutoff).sum())
+        contact_d2 = None
+    n_contacts = (
+        int((contact_d2 <= interface_cutoff * interface_cutoff).sum())
+        if enabled("atomic_contacts")
+        else None
+    )
 
     # Aromatic geometry uses only ring atoms — independent of SASA.
-    n_pi = pi_pi_contacts(a, b, distance_cutoff=pi_pi_distance)
-    n_cpi = cation_pi_contacts(a, b, distance_cutoff=cation_pi_distance)
+    n_pi = pi_pi_contacts(a, b, distance_cutoff=pi_pi_distance) if enabled("pi_pi") else None
+    n_cpi = cation_pi_contacts(a, b, distance_cutoff=cation_pi_distance) if enabled("cation_pi") else None
 
     # Buried-unsat reuses sasa_c / d arrays.
-    unsat = _buried_unsat_from_arrays(
-        combined, sasa_c, d, na_atoms, unsat_sasa_cutoff, hbond_cutoff
+    unsat = (
+        _buried_unsat_from_arrays(combined, sasa_c, d, na_atoms, unsat_sasa_cutoff, hbond_cutoff)
+        if enabled("buried_unsat_polar")
+        else None
     )
 
     # Shape PCA reuses sasa_c / d arrays.
-    mask = d >= min_atom_dsasa_for_shape
-    pts = np.asarray(combined.coords)[mask]
-    if pts.shape[0] >= 3:
-        centered = pts - pts.mean(axis=0)
-        s = np.linalg.svd(centered, compute_uv=False)
-        n = pts.shape[0]
-        s1, s2, s3 = float(s[0]), float(s[1]), float(s[2])
-        plan_rmsd = s3 / math.sqrt(n)
-        elong = (s1 / s2) if s2 > 0 else float("nan")
-        plan_ratio = (s3 / s2) if s2 > 0 else float("nan")
+    needs_mask = any(enabled(m) for m in (
+        "planarity_rmsd", "elongation", "planarity_ratio",
+        "interface_depth", "mean_bfactor_interface", "min_bfactor_interface",
+    ))
+    if needs_mask:
+        mask = d >= min_atom_dsasa_for_shape
+        pts = np.asarray(combined.coords)[mask]
+        if pts.shape[0] >= 3:
+            centered = pts - pts.mean(axis=0)
+            s = np.linalg.svd(centered, compute_uv=False)
+            n = pts.shape[0]
+            s1, s2, s3 = float(s[0]), float(s[1]), float(s[2])
+            plan_rmsd = s3 / math.sqrt(n)
+            elong = (s1 / s2) if s2 > 0 else float("nan")
+            plan_ratio = (s3 / s2) if s2 > 0 else float("nan")
+        else:
+            plan_rmsd = elong = plan_ratio = float("nan")
     else:
-        plan_rmsd = elong = plan_ratio = float("nan")
+        mask = np.asarray([], dtype=bool)
+        plan_rmsd = elong = plan_ratio = None
 
     # Interface depth — centroid-to-centroid distance using the same mask.
-    mask_a = mask[:na_atoms]
-    mask_b = mask[na_atoms:]
-    if mask_a.any() and mask_b.any():
-        c_a = A_xyz[mask_a].mean(axis=0)
-        c_b = B_xyz[mask_b].mean(axis=0)
-        depth = float(np.linalg.norm(c_a - c_b))
+    if needs_mask:
+        mask_a = mask[:na_atoms]
+        mask_b = mask[na_atoms:]
     else:
-        depth = float("nan")
+        mask_a = mask_b = np.asarray([], dtype=bool)
+    if enabled("interface_depth"):
+        if mask_a.any() and mask_b.any():
+            c_a = A_xyz[mask_a].mean(axis=0)
+            c_b = B_xyz[mask_b].mean(axis=0)
+            depth = float(np.linalg.norm(c_a - c_b))
+        else:
+            depth = float("nan")
+    else:
+        depth = None
 
     # B-factor (pLDDT) at interface — uses the same mask as the shape PCA.
-    if a.bfactors is not None and b.bfactors is not None and (mask_a.any() or mask_b.any()):
-        bf = np.concatenate([
-            np.asarray(a.bfactors)[mask_a],
-            np.asarray(b.bfactors)[mask_b],
-        ])
-        mean_bf = float(bf.mean())
-        min_bf = float(bf.min())
+    if enabled("mean_bfactor_interface") or enabled("min_bfactor_interface"):
+        if a.bfactors is not None and b.bfactors is not None and (mask_a.any() or mask_b.any()):
+            bf = np.concatenate([
+                np.asarray(a.bfactors)[mask_a],
+                np.asarray(b.bfactors)[mask_b],
+            ])
+            mean_bf = float(bf.mean())
+            min_bf = float(bf.min())
+        else:
+            mean_bf = float("nan")
+            min_bf = float("nan")
     else:
-        mean_bf = float("nan")
-        min_bf = float("nan")
+        mean_bf = min_bf = None
 
     # PRODIGY ΔG — reuse the contact_d² matrix (at PRODIGY's 5.5 Å cutoff) and
     # the per-atom complex SASA. Adds ~3 ms/call.
-    prodigy_within = contact_d2 <= PRODIGY_IC_CUTOFF * PRODIGY_IC_CUTOFF
-    prodigy_ic_bins = _ic_bins_from_contacts(a, b, prodigy_within)
-    prodigy_interface = (
-        {_side_residue_id("a", a.residue_ids[ai]) for ai, _ in np.argwhere(prodigy_within)}
-        | {_side_residue_id("b", b.residue_ids[bi]) for _, bi in np.argwhere(prodigy_within)}
-    )
-    prodigy_nis_parts = _nis_from_arrays(combined, sasa_c, prodigy_interface)
-    prodigy_dg_value = _prodigy_dg_from_parts(prodigy_ic_bins, prodigy_nis_parts)
+    if enabled("prodigy_dg"):
+        prodigy_within = contact_d2 <= PRODIGY_IC_CUTOFF * PRODIGY_IC_CUTOFF
+        prodigy_ic_bins = _ic_bins_from_contacts(a, b, prodigy_within)
+        prodigy_interface = (
+            {_side_residue_id("a", a.residue_ids[ai]) for ai, _ in np.argwhere(prodigy_within)}
+            | {_side_residue_id("b", b.residue_ids[bi]) for _, bi in np.argwhere(prodigy_within)}
+        )
+        prodigy_nis_parts = _nis_from_arrays(combined, sasa_c, prodigy_interface)
+        prodigy_dg_value = _prodigy_dg_from_parts(prodigy_ic_bins, prodigy_nis_parts)
+    else:
+        prodigy_dg_value = None
 
     return InterfaceResult(
-        sc=sc_value,
-        dsasa=dsasa_total,
-        n_interface_a=n_a,
-        n_interface_b=n_b,
-        aromatic_dsasa_fraction=(arom / dsasa_total) if dsasa_total > 0 else 0.0,
-        hbonds=n_hb,
-        salt_bridges=n_sb,
-        bhsa=bhsa,
-        bpsa=bpsa,
-        bcsa=bcsa,
-        hydrophobic_fraction=(bhsa / dsasa_total) if dsasa_total > 0 else 0.0,
-        hbond_density=(100.0 * n_hb / dsasa_total) if dsasa_total > 0 else 0.0,
-        pi_pi=n_pi,
-        cation_pi=n_cpi,
+        sc=sc_value if enabled("sc") else None,
+        dsasa=dsasa_total if enabled("dsasa") else None,
+        n_interface_a=n_a if enabled("n_interface_a") else None,
+        n_interface_b=n_b if enabled("n_interface_b") else None,
+        aromatic_dsasa_fraction=((arom / dsasa_total) if dsasa_total > 0 else 0.0) if enabled("aromatic_dsasa_fraction") else None,
+        hbonds=n_hb if enabled("hbonds") else None,
+        salt_bridges=n_sb if enabled("salt_bridges") else None,
+        bhsa=bhsa if enabled("bhsa") else None,
+        bpsa=bpsa if enabled("bpsa") else None,
+        bcsa=bcsa if enabled("bcsa") else None,
+        hydrophobic_fraction=((bhsa / dsasa_total) if dsasa_total > 0 else 0.0) if enabled("hydrophobic_fraction") else None,
+        hbond_density=((100.0 * n_hb / dsasa_total) if dsasa_total > 0 else 0.0) if enabled("hbond_density") else None,
+        pi_pi=n_pi if enabled("pi_pi") else None,
+        cation_pi=n_cpi if enabled("cation_pi") else None,
         buried_unsat_polar=unsat,
-        planarity_rmsd=plan_rmsd,
-        elongation=elong,
-        planarity_ratio=plan_ratio,
-        dsasa_a=d_a,
-        dsasa_b=d_b,
-        asymmetry=asym,
+        planarity_rmsd=plan_rmsd if enabled("planarity_rmsd") else None,
+        elongation=elong if enabled("elongation") else None,
+        planarity_ratio=plan_ratio if enabled("planarity_ratio") else None,
+        dsasa_a=d_a if enabled("dsasa_a") else None,
+        dsasa_b=d_b if enabled("dsasa_b") else None,
+        asymmetry=asym if enabled("asymmetry") else None,
         atomic_contacts=n_contacts,
         interface_depth=depth,
         disulfides=ssbond,
         gly_pro_fraction=gp_frac,
-        bb_dsasa=bb_d,
-        sc_dsasa=sc_d,
-        sidechain_fraction=(sc_d / dsasa_total) if dsasa_total > 0 else 0.0,
-        charge_a=qa,
-        charge_b=qb,
+        bb_dsasa=bb_d if enabled("bb_dsasa") else None,
+        sc_dsasa=sc_d if enabled("sc_dsasa") else None,
+        sidechain_fraction=((sc_d / dsasa_total) if dsasa_total > 0 else 0.0) if enabled("sidechain_fraction") else None,
+        charge_a=qa if enabled("charge_a") else None,
+        charge_b=qb if enabled("charge_b") else None,
         charge_complementarity=charge_compl,
-        mean_bfactor_interface=mean_bf,
-        min_bfactor_interface=min_bf,
+        mean_bfactor_interface=mean_bf if enabled("mean_bfactor_interface") else None,
+        min_bfactor_interface=min_bf if enabled("min_bfactor_interface") else None,
         prodigy_dg=prodigy_dg_value,
-        hotspots_a=hs_a,
-        hotspots_b=hs_b,
+        hotspots_a=hs_a if enabled("hotspots_a") else None,
+        hotspots_b=hs_b if enabled("hotspots_b") else None,
     )
 
 
