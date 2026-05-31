@@ -230,10 +230,12 @@ Available helpers:
 | `openmm_potential_energy(path, ...)` | Potential energy for selected chains after OpenMM hydrogen addition. |
 | `calculate_gbsa_binding_energy(path, chains_a, chains_b, ...)` | Single-structure MM-GBSA-style estimate: `G_complex - G_a - G_b`. |
 
-Defaults use `amber14-all.xml` and `implicit/obc2.xml`. The module adds
-hydrogens with OpenMM but does not repair missing heavy atoms, infer ligands,
-add solvent boxes, mutate residues, or parameterize nonstandard chemistry.
-Template and parameterization errors are reported by OpenMM.
+Defaults use `amber14-all.xml` and `implicit/obc2.xml`. The module keeps
+standard amino-acid residues, excludes waters and non-protein residues before
+OpenMM setup, and adds hydrogens with OpenMM. It does not repair missing heavy
+atoms, infer ligands, add solvent boxes, mutate residues, or parameterize
+nonstandard chemistry. Template and parameterization errors are reported by
+OpenMM.
 
 The GBSA result is a force-field endpoint score, not PRODIGY, not experimental
 affinity, and not Poisson-Boltzmann PBSA. Entropy is not included. Relaxation

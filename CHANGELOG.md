@@ -9,6 +9,9 @@
   scoring between two chain groups.
 - `openmm` optional dependency extra. The base package still imports without
   OpenMM installed.
+- The OpenMM helpers keep standard amino-acid residues and exclude waters or
+  non-protein residues before setup; missing heavy atoms still surface as
+  OpenMM template errors.
 
 ## [0.1.1] — 2026-05-30
 

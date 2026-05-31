@@ -16,6 +16,12 @@ from protein_interface import interface_residues, load_atoms
 
 DEFAULT_FORCEFIELD_FILES = ("amber14-all.xml", "implicit/obc2.xml")
 KJ_TO_KCAL = 0.2390057361376673
+STANDARD_PROTEIN_RESIDUES = frozenset({
+    "ALA", "ARG", "ASN", "ASP", "CYS",
+    "GLN", "GLU", "GLY", "HIS", "ILE",
+    "LEU", "LYS", "MET", "PHE", "PRO",
+    "SER", "THR", "TRP", "TYR", "VAL",
+})
 
 
 @dataclass(frozen=True)
@@ -265,6 +271,7 @@ def _prepared_topology_positions(
     if chains is not None:
         topology, positions = _subset_topology_positions(topology, positions, chains, app)
     modeller = app.Modeller(topology, positions)
+    _delete_nonprotein_residues(modeller)
     modeller.addHydrogens(forcefield, pH=ph)
     return modeller.topology, modeller.positions
 
@@ -287,6 +294,16 @@ def _subset_topology_positions(
     modeller = app.Modeller(topology, positions)
     modeller.delete([chain for chain in modeller.topology.chains() if chain.id not in wanted])
     return modeller.topology, modeller.positions
+
+
+def _delete_nonprotein_residues(modeller: Any) -> None:
+    residues = [
+        residue
+        for residue in modeller.topology.residues()
+        if residue.name not in STANDARD_PROTEIN_RESIDUES
+    ]
+    if residues:
+        modeller.delete(residues)
 
 
 def _create_system(app: Any, topology: Any, forcefield: Any) -> Any:
@@ -408,9 +425,9 @@ def _validate_input_suffix(path: str | Path) -> None:
 def _write_structure(path: Path, topology: Any, positions: Any, app: Any) -> None:
     with path.open("w") as handle:
         if path.suffix.lower() in {".cif", ".mmcif"}:
-            app.PDBxFile.writeFile(topology, positions, handle)
+            app.PDBxFile.writeFile(topology, positions, handle, keepIds=True)
         else:
-            app.PDBFile.writeFile(topology, positions, handle)
+            app.PDBFile.writeFile(topology, positions, handle, keepIds=True)
 
 
 def _validate_finite(name: str, value: float) -> None:
@@ -431,6 +448,7 @@ def _validate_max_iterations(value: int) -> None:
 
 __all__ = [
     "DEFAULT_FORCEFIELD_FILES",
+    "STANDARD_PROTEIN_RESIDUES",
     "RelaxationResult",
     "EnergyResult",
     "GBSAResult",

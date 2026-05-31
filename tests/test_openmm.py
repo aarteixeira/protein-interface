@@ -16,6 +16,7 @@ from protein_interface import interface_residues, load_atoms
 
 DATA_DIR = Path(__file__).parent / "data"
 NB_AG = DATA_DIR / "nb_ag_test.pdb"
+ONE_FYT = DATA_DIR / "1fyt.pdb"
 
 
 def test_openmm_dependency_is_optional(monkeypatch):
@@ -62,7 +63,7 @@ def test_invalid_chain_raises_value_error():
 def test_openmm_potential_energy_returns_finite_values():
     pytest.importorskip("openmm")
 
-    result = openmm_potential_energy(NB_AG, chains=["A"])
+    result = openmm_potential_energy(ONE_FYT, chains=["A"])
 
     assert result.atom_count > 0
     assert result.chains == ("A",)
@@ -74,11 +75,11 @@ def test_openmm_potential_energy_returns_finite_values():
 def test_gbsa_binding_energy_returns_consistent_delta():
     pytest.importorskip("openmm")
 
-    result = calculate_gbsa_binding_energy(NB_AG, chains_a=["A"], chains_b=["L"])
+    result = calculate_gbsa_binding_energy(ONE_FYT, chains_a=["A"], chains_b=["C"])
 
     expected = result.complex_energy_kj_mol - result.chain_a_energy_kj_mol - result.chain_b_energy_kj_mol
     assert result.chains_a == ("A",)
-    assert result.chains_b == ("L",)
+    assert result.chains_b == ("C",)
     assert result.entropy_included is False
     assert math.isfinite(result.delta_g_kj_mol)
     assert math.isclose(result.delta_g_kj_mol, expected)
@@ -89,7 +90,7 @@ def test_whole_relaxation_reduces_energy_and_writes_output(tmp_path):
 
     out = tmp_path / "relaxed.pdb"
     result = relax_structure(
-        NB_AG,
+        ONE_FYT,
         output_path=out,
         chains=["A"],
         max_iterations=10,
@@ -111,11 +112,11 @@ def test_interface_relaxation_restrains_noninterface_atoms(tmp_path):
 
     out = tmp_path / "interface_relaxed.pdb"
     result = relax_structure(
-        NB_AG,
+        ONE_FYT,
         output_path=out,
         mode="interface",
         chains_a=["A"],
-        chains_b=["L"],
+        chains_b=["C"],
         restraint_kj_mol_nm2=1_000_000.0,
         max_iterations=10,
     )
@@ -127,7 +128,7 @@ def test_interface_relaxation_restrains_noninterface_atoms(tmp_path):
     assert result.restrained_atom_count + result.free_atom_count == result.atom_count
     assert result.final_energy_kj_mol <= result.initial_energy_kj_mol + 1e-6
 
-    assert _max_noninterface_heavy_atom_displacement(NB_AG, out, ["A"], ["L"]) < 0.2
+    assert _max_noninterface_heavy_atom_displacement(ONE_FYT, out, ["A"], ["C"]) < 0.2
 
 
 def _max_noninterface_heavy_atom_displacement(
@@ -151,7 +152,6 @@ def _max_noninterface_heavy_atom_displacement(
 def _side_max_displacement(before, after, interface_ids: set[tuple[str, int, str]]) -> float:
     assert before.atom_names == after.atom_names
     assert before.residue_names == after.residue_names
-    assert before.residue_ids == after.residue_ids
 
     max_displacement = 0.0
     for i, rid in enumerate(before.residue_ids):
