@@ -1,0 +1,14 @@
+name: protein-interface-gpu
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy>=1.24
+  - biopython>=1.83
+  - openmm>=8,<8.3
+  - cuda-version=12.4
+  - pip
+  - maturin>=1.5
+  - pytest
+  - pip:
+      - -e .

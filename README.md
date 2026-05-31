@@ -55,6 +55,21 @@ Install the OpenMM extra only when you need force-field calculations:
 python -m pip install "protein-interface[openmm]"
 ```
 
+For Linux GPU use, prefer the conda/mamba environment file instead of the pip
+extra:
+
+```bash
+mamba env create -f environment-gpu.yml
+mamba activate protein-interface-gpu
+```
+
+The GPU environment pins `cuda-version=12.4` and `openmm<8.3`. This avoids
+`CUDA_ERROR_UNSUPPORTED_PTX_VERSION` on NVIDIA 550-series drivers, where newer
+conda-forge OpenMM solves can pull CUDA 12.9 runtime components that the driver
+cannot JIT. If your driver supports a newer CUDA runtime, update the
+`cuda-version` pin deliberately and verify `platform="CUDA"` before running
+long sampled-GBSA jobs.
+
 ## Quick Start
 
 ```python
@@ -248,6 +263,33 @@ The sampled GBSA helper runs minimization, optional equilibration, and MD before
 scoring sampled frames. It warns at runtime because it is slower than the
 single-structure score and should be run on a GPU platform such as CUDA, OpenCL,
 or Metal for practical production settings.
+
+On Linux, pass `platform="CUDA"` only after confirming OpenMM sees the CUDA
+platform:
+
+```python
+from openmm import Platform
+
+print([Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())])
+```
+
+If CUDA setup fails with `CUDA_ERROR_UNSUPPORTED_PTX_VERSION`, recreate the
+environment from `environment-gpu.yml` or pin `cuda-version` to a runtime
+supported by the installed NVIDIA driver.
+
+As a GPU smoke comparison, `tests/data/1fyt.pdb` chains `A` vs `C` were run on
+`gnode1` with OpenMM 8.2.0 and `platform="CUDA"`:
+
+| Method | Settings | Result |
+|---|---|---|
+| Single-structure GBSA | one endpoint evaluation | `-183.59 kJ/mol` (`-43.88 kcal/mol`) |
+| Sampled GBSA default | 10 ps equilibration, 100 ps production, 100 frames | `-306.23 +/- 26.11 kJ/mol` (`-73.19 +/- 6.24 kcal/mol`) |
+
+The sampled default took about 21 s on the `gnode1` NVIDIA RTX 4000 SFF Ada GPU
+for this small bundled fixture. Treat this as a functional smoke test and a
+quick sampled estimate, not a converged binding free energy. Production use
+should increase equilibration and production length, check stability of the
+trajectory, and report convergence across independent seeds or replicate runs.
 
 ## Metrics
 
