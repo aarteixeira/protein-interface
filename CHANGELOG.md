@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Optional `protein_interface.openmm` module for OpenMM-backed structure
+  minimization, potential energy calculation, and MM-GBSA-style binding-energy
+  scoring between two chain groups.
+- `openmm` optional dependency extra. The base package still imports without
+  OpenMM installed.
+
 ## [0.1.1] — 2026-05-30
 
 ### Added

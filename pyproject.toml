@@ -10,6 +10,9 @@ dependencies = ["numpy>=1.24", "biopython>=1.83"]
 license = {text = "MIT"}
 description = "Fast, geometry-based interface analysis for protein-protein complexes (SASA, dSASA, H-bonds, salt bridges, π-π, cation-π, buried unsats, shape complementarity, and more)"
 
+[project.optional-dependencies]
+openmm = ["openmm>=8"]
+
 [tool.maturin]
 features = ["pyo3/extension-module", "pyo3/abi3-py310"]
 python-source = "python"

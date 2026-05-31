@@ -47,6 +47,13 @@ The runtime Python dependencies declared in `pyproject.toml` are `numpy` and
 - `prodigy_prot` for optional upstream PRODIGY comparison tests
 - `biotite` for biotite intake-path tests
 - `pandas` for `score_many()`
+- `openmm` for optional relaxation and MM-GBSA-style energy helpers
+
+Install the OpenMM extra only when you need force-field calculations:
+
+```bash
+python -m pip install "protein-interface[openmm]"
+```
 
 ## Quick Start
 
@@ -187,6 +194,52 @@ PRODIGY pass and buried-unsat scan, while `analyze(a, b, metrics={"hbonds"})`
 does not run SASA or SC at all. Unknown metric names raise `ValueError`.
 Disabled fields are returned as `None`.
 
+## Optional OpenMM Helpers
+
+`protein_interface.openmm` provides optional force-field calculations. The base
+package does not import OpenMM, and `analyze()` never relaxes or re-energies
+coordinates.
+
+```python
+from protein_interface.openmm import (
+    calculate_gbsa_binding_energy,
+    relax_structure,
+)
+
+relaxed = relax_structure(
+    "complex.pdb",
+    output_path="complex_relaxed.pdb",
+    chains=["H", "A"],
+)
+
+gbsa = calculate_gbsa_binding_energy(
+    "complex_relaxed.pdb",
+    chains_a=["H"],
+    chains_b=["A"],
+)
+
+print(relaxed.final_energy_kcal_mol)
+print(gbsa.delta_g_kcal_mol)
+```
+
+Available helpers:
+
+| Function | Purpose |
+|---|---|
+| `relax_structure(path, ...)` | OpenMM energy minimization for a whole selected structure or an interface-focused run with non-interface atoms restrained. |
+| `openmm_potential_energy(path, ...)` | Potential energy for selected chains after OpenMM hydrogen addition. |
+| `calculate_gbsa_binding_energy(path, chains_a, chains_b, ...)` | Single-structure MM-GBSA-style estimate: `G_complex - G_a - G_b`. |
+
+Defaults use `amber14-all.xml` and `implicit/obc2.xml`. The module adds
+hydrogens with OpenMM but does not repair missing heavy atoms, infer ligands,
+add solvent boxes, mutate residues, or parameterize nonstandard chemistry.
+Template and parameterization errors are reported by OpenMM.
+
+The GBSA result is a force-field endpoint score, not PRODIGY, not experimental
+affinity, and not Poisson-Boltzmann PBSA. Entropy is not included. Relaxation
+changes coordinates, so downstream geometry metrics should be recomputed from
+the relaxed output if you want relaxed-structure descriptors.
+
 ## Metrics
 
 All distances are in Angstroms. Surface areas are in square Angstroms.
@@ -264,6 +317,13 @@ python -m pip install freesasa prodigy-prot biotite pandas
 python -m pytest -q
 ```
 
+OpenMM tests are enabled by installing the optional extra:
+
+```bash
+python -m pip install ".[openmm]"
+python -m pytest -q
+```
+
 The test suite includes:
 
 - unit tests for Rust SASA, H-bond, salt-bridge, and validation behavior
@@ -271,6 +331,7 @@ The test suite includes:
   and BoltzGen-shaped structures
 - FreeSASA comparison tests for SASA when `freesasa` is installed
 - upstream `prodigy_prot` comparison tests when `prodigy_prot` is installed
+- OpenMM relaxation and GBSA tests when `openmm` is installed
 
 ## Scope
 
@@ -281,12 +342,15 @@ Included:
 - PDB/mmCIF loading through Biopython
 - Rust kernels for SASA, H-bond counts, salt-bridge atom-pair counts, and SC
 - batched SASA execution through Rayon
+- optional OpenMM whole-structure relaxation, interface-restrained relaxation,
+  potential energy, and MM-GBSA-style endpoint scoring
 
 Not included:
 
-- force-field binding energies
-- structure relaxation
 - Poisson-Boltzmann electrostatics
+- entropy corrections for GBSA scores
+- automatic structure repair, missing-heavy-atom rebuilding, ligand
+  parameterization, explicit-solvent setup, or membrane setup
 - ligand, water, or intrachain H-bond satisfaction
 - DSSP or secondary-structure-resolved metrics
 - automatic threshold selection for design campaigns
