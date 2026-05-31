@@ -54,8 +54,10 @@ impl ScResult {
 ///     parallel: enable Rayon parallelism inside sc-rs (default True;
 ///               set False when calling from a ProcessPoolExecutor to avoid
 ///               oversubscription)
+///     use_spatial_index: enable deterministic spatial broadphase searches
+///               inside sc-rs (default True; set False for legacy parity checks)
 #[pyfunction]
-#[pyo3(signature = (coords_a, atom_names_a, residue_names_a, coords_b, atom_names_b, residue_names_b, parallel=true))]
+#[pyo3(signature = (coords_a, atom_names_a, residue_names_a, coords_b, atom_names_b, residue_names_b, parallel=true, use_spatial_index=true))]
 fn compute_sc(
     coords_a: Vec<[f64; 3]>,
     atom_names_a: Vec<String>,
@@ -64,6 +66,7 @@ fn compute_sc(
     atom_names_b: Vec<String>,
     residue_names_b: Vec<String>,
     parallel: bool,
+    use_spatial_index: bool,
 ) -> PyResult<ScResult> {
     let na = coords_a.len();
     let nb = coords_b.len();
@@ -86,6 +89,7 @@ fn compute_sc(
 
     let mut calc = ScCalculator::new();
     calc.settings_mut().enable_parallel = parallel;
+    calc.settings_mut().use_spatial_index = use_spatial_index;
 
     for i in 0..na {
         let mut a = Atom::new();

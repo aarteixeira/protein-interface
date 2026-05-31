@@ -203,10 +203,10 @@ def run_all(state):
         compute_sc,
         from_biotite,
         from_boltzgen_refold,
-        from_boltzgen_structure,
         from_pdb,
         from_structure,
     )
+    from protein_interface.io import from_boltzgen_structure
 
     results = {}
     timings = {}
@@ -332,7 +332,12 @@ def bench_batch():
     from protein_interface import score_many
 
     paths = [PDB_1FYT] * 100
-    score_many(paths, CHAINS_A, CHAINS_B, n_workers=8)  # warmup
+    try:
+        score_many(paths, CHAINS_A, CHAINS_B, n_workers=8)  # warmup
+    except ModuleNotFoundError as exc:
+        if exc.name == "pandas":
+            return None, None
+        raise
     t0 = time.perf_counter()
     df = score_many(paths, CHAINS_A, CHAINS_B, n_workers=8)
     elapsed = time.perf_counter() - t0
@@ -359,10 +364,14 @@ def main():
 
     # batch timing
     cps, ok = bench_batch()
-    timings["score_many"] = 100 / cps * 1000  # not used in table directly
+    if cps is not None:
+        timings["score_many"] = 100 / cps * 1000  # not used in table directly
 
     print_speed_table(timings)
-    print(f"\n  {'score_many()':<50s}  {cps:>6.1f} cx/s  (100 files, 8 workers, ok={ok})")
+    if cps is None:
+        print(f"\n  {'score_many()':<50s}  skipped  (pandas not installed)")
+    else:
+        print(f"\n  {'score_many()':<50s}  {cps:>6.1f} cx/s  (100 files, 8 workers, ok={ok})")
 
     print()
     if not consistent:

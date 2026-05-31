@@ -6,11 +6,15 @@ edition = "2021"
 [lib]
 name = "_core"
 crate-type = ["cdylib"]
+test = false
+
+[features]
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
+pyo3 = { version = "0.22", features = ["abi3-py310"] }
 rayon = "1.10"
-sc_rs = { git = "https://github.com/cytokineking/sc-rs", tag = "v1.0.0", package = "sc-rs" }
+sc_rs = { path = "vendor/sc-rs", package = "sc-rs" }
 
 [profile.release]
 lto = "fat"

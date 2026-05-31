@@ -10,8 +10,10 @@ of an interface by chain ID, and returns geometry-derived metrics from one
 The package computes:
 
 - solvent accessible surface area (SASA) and buried surface area (dSASA)
-- Lawrence-Colman shape complementarity through the upstream
-  [`sc-rs`](https://github.com/cytokineking/sc-rs) Rust crate
+- Lawrence-Colman shape complementarity through a vendored
+  [`sc-rs`](https://github.com/cytokineking/sc-rs) implementation with
+  spatial-index broadphase searches; the bundled larger 1FYT benchmark is about
+  2x faster than the legacy all-pairs path with identical SC output
 - distance-based H-bonds, salt bridges, aromatic contacts, cation-pi contacts,
   disulfides, and atom contacts
 - buried unsatisfied polar atoms
@@ -21,6 +23,11 @@ The package computes:
 
 All metrics are derived from atom coordinates, residue names, atom names, and
 optional B-factors. This is not a force field.
+
+The SC implementation is a local, parity-tested `sc-rs` variant. It preserves
+the Lawrence-Colman result and replaces several all-pairs searches with
+deterministic spatial indexes. See [SC Implementation and Validation](#sc-implementation-and-validation)
+for parity cases and benchmark numbers.
 
 ## Install
 
@@ -41,7 +48,7 @@ maturin develop --release
 ```
 
 The runtime Python dependencies declared in `pyproject.toml` are `numpy` and
-`biopython`. Some tests and helper paths use optional packages:
+`biopython`. Optional dependencies:
 
 - `freesasa` for SASA comparison tests
 - `prodigy_prot` for optional upstream PRODIGY comparison tests
@@ -157,7 +164,41 @@ points:
 These functions return `ScResult` with `sc`, `median_distance`, `trimmed_area`,
 `atoms_a`, and `atoms_b`.
 
+The low-level `compute_sc()` binding uses the spatial-indexed Rust path by
+default. Pass `use_spatial_index=False` only for legacy parity or performance
+checks.
+
 For the full metric set, call `load_atoms()` and then `analyze()`.
+
+## SC Implementation and Validation
+
+This package vendors the MIT-licensed `sc-rs` implementation for the
+Lawrence-Colman SC calculation. The vendored version adds deterministic
+spatial-index broadphase searches for atom attention, neighbor discovery,
+opposite-side dot burial, peripheral-band trimming, and nearest-dot scoring.
+The legacy all-pairs path remains available through
+`compute_sc(..., use_spatial_index=False)` for parity and performance checks.
+
+SC parity is tested by running the spatial-indexed and legacy all-pairs paths
+on multiple bundled complexes and asserting identical atom counts plus matching
+`sc`, `median_distance`, and `trimmed_area` within `1e-9`:
+
+| Case | Chains | Purpose |
+|---|---|---|
+| `tests/data/1fyt.pdb` | D vs A | single-chain TCR/MHC interface |
+| `tests/data/1fyt.pdb` | D:E vs A:B:C | larger multi-chain interface |
+| `tests/data/nb_ag_test.pdb` | A vs L | nanobody-antigen interface |
+
+Local benchmark on this machine after `maturin develop --release`:
+
+| Case | Atoms | Legacy all-pairs | Spatial index | Speedup |
+|---|---:|---:|---:|---:|
+| 1FYT D vs A | 1521 + 1479 | 55.2 ms | 32.4 ms | 1.70x |
+| 1FYT D:E vs A:B:C | 3442 + 3043 | 473.2 ms | 233.1 ms | 2.03x |
+
+The gated performance test is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
+pytest tests/test_sc_performance.py -q`; it first checks value parity, then
+requires at least a 2x speedup on the larger 1FYT case.
 
 ## Validation Behavior
 
@@ -194,7 +235,7 @@ result = analyze(
 )
 ```
 
-`analyze()` defaults to `n_points=92` for faster screening. For higher-precision
+`analyze()` defaults to `n_points=92` for lower-cost screening. For higher-precision
 SASA or dSASA measurement, pass `n_points=960`. Standalone SASA helpers default
 to `n_points=960`.
 
@@ -215,10 +256,15 @@ Disabled fields are returned as `None`.
 package does not import OpenMM, and `analyze()` never relaxes or re-energies
 coordinates.
 
+Install the OpenMM extra only when you need these helpers:
+
+```bash
+python -m pip install "protein-interface[openmm]"
+```
+
 ```python
 from protein_interface.openmm import (
     calculate_gbsa_binding_energy,
-    calculate_sampled_gbsa_binding_energy,
     relax_structure,
 )
 
@@ -238,71 +284,15 @@ print(relaxed.final_energy_kcal_mol)
 print(gbsa.delta_g_kcal_mol)
 ```
 
-Available helpers:
+OpenMM helpers keep standard amino-acid residues, remove waters and non-protein
+residues before setup, add hydrogens with OpenMM, and use `amber14-all.xml` with
+`implicit/obc2.xml` by default. They do not repair missing heavy atoms or
+parameterize nonstandard chemistry.
 
-| Function | Purpose |
-|---|---|
-| `relax_structure(path, ...)` | OpenMM energy minimization for a whole selected structure or an interface-focused run with non-interface atoms restrained. |
-| `openmm_potential_energy(path, ...)` | Potential energy for selected chains after OpenMM hydrogen addition. |
-| `calculate_gbsa_binding_energy(path, chains_a, chains_b, ...)` | Single-structure MM-GBSA-style estimate: `G_complex - G_a - G_b`. |
-| `calculate_sampled_gbsa_binding_energy(path, chains_a, chains_b, preset="short", ...)` | Slower MD-sampled MM-GBSA estimate over multiple frames. |
-
-Defaults use `amber14-all.xml` and `implicit/obc2.xml`. The module keeps
-standard amino-acid residues, excludes waters and non-protein residues before
-OpenMM setup, and adds hydrogens with OpenMM. It does not repair missing heavy
-atoms, infer ligands, add solvent boxes, mutate residues, or parameterize
-nonstandard chemistry. Template and parameterization errors are reported by
-OpenMM.
-
-The GBSA result is a force-field endpoint score, not PRODIGY, not experimental
-affinity, and not Poisson-Boltzmann PBSA. Entropy is not included. Relaxation
-changes coordinates, so downstream geometry metrics should be recomputed from
-the relaxed output if you want relaxed-structure descriptors.
-
-The sampled GBSA helper runs minimization, optional equilibration, and MD before
-scoring sampled frames. It warns at runtime because it is slower than the
-single-structure score and should be run on a GPU platform such as CUDA, OpenCL,
-or Metal for practical production settings.
-
-Sampled GBSA defaults to `preset="short"` so examples and quick checks finish
-quickly. Choose a longer preset only when the extra runtime is justified:
-
-| Preset | Equilibration | Production | Sample interval | Frames | Use |
-|---|---:|---:|---:|---:|---|
-| `short` | 10 ps | 100 ps | 1 ps | 100 | Default. Use for smoke tests, API checks, GPU setup validation, and rough triage. Do not treat it as a stable MM-GBSA estimate. |
-| `medium` | 0.5 ns | 5 ns | 20 ps | 250 | Use for practical GPU screening of related variants after filtering with faster metrics. This is the minimum recommended preset for comparing candidates. |
-| `long` | 1 ns | 20 ns | 40 ps | 500 | Use for higher-stakes ranking of a small number of finalists, preferably with replicate runs. It is slower and still does not prove convergence. |
-
-The presets assume the default 2 fs timestep. Explicit `production_steps`,
-`equilibration_steps`, `sample_interval`, or `timestep_fs` arguments override
-the selected preset.
-
-On Linux, pass `platform="CUDA"` only after confirming OpenMM sees the CUDA
-platform:
-
-```python
-from openmm import Platform
-
-print([Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())])
-```
-
-If CUDA setup fails with `CUDA_ERROR_UNSUPPORTED_PTX_VERSION`, recreate the
-environment from `environment-gpu.yml` or pin `cuda-version` to a runtime
-supported by the installed NVIDIA driver.
-
-As a GPU smoke comparison, `tests/data/1fyt.pdb` chains `A` vs `C` were run on
-`gnode1` with OpenMM 8.2.0 and `platform="CUDA"`:
-
-| Method | Settings | Result |
-|---|---|---|
-| Single-structure GBSA | one endpoint evaluation | `-183.59 kJ/mol` (`-43.88 kcal/mol`) |
-| Sampled GBSA default | 10 ps equilibration, 100 ps production, 100 frames | `-306.23 +/- 26.11 kJ/mol` (`-73.19 +/- 6.24 kcal/mol`) |
-
-The sampled default took about 21 s on the `gnode1` NVIDIA RTX 4000 SFF Ada GPU
-for this small bundled fixture. Treat this as a functional smoke test and a
-quick sampled estimate, not a converged binding free energy. Production use
-should increase equilibration and production length, check stability of the
-trajectory, and report convergence across independent seeds or replicate runs.
+GBSA outputs are force-field endpoint scores. They are not PRODIGY, experimental
+affinity, or Poisson-Boltzmann PBSA, and entropy is not included. See
+[docs/openmm.md](docs/openmm.md) for sampled-GBSA presets, CUDA setup, and the
+bundled GPU smoke comparison.
 
 ## Metrics
 
@@ -422,7 +412,9 @@ Not included:
 ## References and Attribution
 
 - [`sc-rs`](https://github.com/cytokineking/sc-rs), MIT license. This package
-  calls `sc-rs` for the Lawrence-Colman SC metric.
+  vendors `sc-rs` for the Lawrence-Colman SC metric and adds deterministic
+  spatial-index broadphase searches while keeping a legacy all-pairs parity
+  path.
 - Lawrence MC and Colman PM. Shape complementarity at protein/protein
   interfaces. *Journal of Molecular Biology* 234:946-950 (1993).
   DOI: [10.1006/jmbi.1993.1648](https://doi.org/10.1006/jmbi.1993.1648).
