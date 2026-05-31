@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import math
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,32 @@ class GBSAResult:
     chain_a_energy_kcal_mol: float
     chain_b_energy_kj_mol: float
     chain_b_energy_kcal_mol: float
+    chains_a: tuple[str, ...]
+    chains_b: tuple[str, ...]
+    entropy_included: bool
+    platform: str
+    forcefield_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SampledGBSAResult:
+    mean_delta_g_kj_mol: float
+    mean_delta_g_kcal_mol: float
+    std_delta_g_kj_mol: float
+    std_delta_g_kcal_mol: float
+    frame_delta_g_kj_mol: tuple[float, ...]
+    frame_delta_g_kcal_mol: tuple[float, ...]
+    mean_complex_energy_kj_mol: float
+    mean_chain_a_energy_kj_mol: float
+    mean_chain_b_energy_kj_mol: float
+    frame_count: int
+    production_steps: int
+    equilibration_steps: int
+    sample_interval: int
+    timestep_fs: float
+    temperature_kelvin: float
+    friction_per_ps: float
+    minimized: bool
     chains_a: tuple[str, ...]
     chains_b: tuple[str, ...]
     entropy_included: bool
@@ -234,6 +261,127 @@ def calculate_gbsa_binding_energy(
     )
 
 
+def calculate_sampled_gbsa_binding_energy(
+    path: str | Path,
+    chains_a: list[str] | tuple[str, ...],
+    chains_b: list[str] | tuple[str, ...],
+    forcefield_files: tuple[str, ...] = DEFAULT_FORCEFIELD_FILES,
+    ph: float = 7.0,
+    production_steps: int = 50_000,
+    equilibration_steps: int = 5_000,
+    sample_interval: int = 500,
+    timestep_fs: float = 2.0,
+    temperature_kelvin: float = 300.0,
+    friction_per_ps: float = 1.0,
+    minimize: bool = True,
+    random_seed: int | None = None,
+    platform: str | None = None,
+) -> SampledGBSAResult:
+    """Estimate MM-GBSA over frames from a short OpenMM trajectory.
+
+    This is slower than :func:`calculate_gbsa_binding_energy` because it runs MD
+    and evaluates endpoint energies on sampled frames. It still omits entropy
+    and should be treated as a force-field endpoint score, not an absolute
+    experimental affinity.
+    """
+    _validate_chain_groups(chains_a, chains_b)
+    _validate_input_suffix(path)
+    _validate_finite("ph", ph)
+    _validate_positive_int("production_steps", production_steps)
+    _validate_nonnegative_int("equilibration_steps", equilibration_steps)
+    _validate_positive_int("sample_interval", sample_interval)
+    _validate_positive_finite("timestep_fs", timestep_fs)
+    _validate_positive_finite("temperature_kelvin", temperature_kelvin)
+    _validate_positive_finite("friction_per_ps", friction_per_ps)
+    if random_seed is not None:
+        _validate_nonnegative_int("random_seed", random_seed)
+
+    warnings.warn(
+        "calculate_sampled_gbsa_binding_energy runs OpenMM MD before scoring; "
+        "it is slower than single-structure GBSA and is best run on a GPU "
+        "platform such as CUDA, OpenCL, or Metal.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+    app, omm, unit = _require_openmm()
+    forcefield = app.ForceField(*forcefield_files)
+    complex_chains = _chain_union(chains_a, chains_b)
+    topology, positions = _prepared_topology_positions(
+        path, app, forcefield, ph=ph, chains=complex_chains
+    )
+    system = _create_system(app, topology, forcefield)
+    simulation = _make_md_simulation(
+        topology,
+        system,
+        omm,
+        unit,
+        platform,
+        timestep_fs=timestep_fs,
+        temperature_kelvin=temperature_kelvin,
+        friction_per_ps=friction_per_ps,
+    )
+    simulation.context.setPositions(positions)
+    if minimize:
+        simulation.minimizeEnergy()
+    if random_seed is None:
+        simulation.context.setVelocitiesToTemperature(temperature_kelvin * unit.kelvin)
+    else:
+        simulation.context.setVelocitiesToTemperature(temperature_kelvin * unit.kelvin, random_seed)
+    if equilibration_steps:
+        simulation.step(equilibration_steps)
+
+    indices_a = _atom_indices_for_chains(topology, chains_a)
+    indices_b = _atom_indices_for_chains(topology, chains_b)
+    eval_contexts = _gbsa_energy_contexts(
+        topology, positions, forcefield, app, omm, unit, platform, chains_a, chains_b, indices_a, indices_b
+    )
+
+    complex_values: list[float] = []
+    chain_a_values: list[float] = []
+    chain_b_values: list[float] = []
+    delta_values: list[float] = []
+
+    steps_remaining = production_steps
+    while steps_remaining > 0:
+        steps = min(sample_interval, steps_remaining)
+        simulation.step(steps)
+        steps_remaining -= steps
+        frame_positions = simulation.context.getState(getPositions=True).getPositions()
+        complex_energy, energy_a, energy_b = _gbsa_frame_energies(frame_positions, eval_contexts, unit)
+        complex_values.append(complex_energy)
+        chain_a_values.append(energy_a)
+        chain_b_values.append(energy_b)
+        delta_values.append(complex_energy - energy_a - energy_b)
+
+    mean_delta = _mean(delta_values)
+    std_delta = _sample_std(delta_values)
+    return SampledGBSAResult(
+        mean_delta_g_kj_mol=mean_delta,
+        mean_delta_g_kcal_mol=mean_delta * KJ_TO_KCAL,
+        std_delta_g_kj_mol=std_delta,
+        std_delta_g_kcal_mol=std_delta * KJ_TO_KCAL,
+        frame_delta_g_kj_mol=tuple(delta_values),
+        frame_delta_g_kcal_mol=tuple(v * KJ_TO_KCAL for v in delta_values),
+        mean_complex_energy_kj_mol=_mean(complex_values),
+        mean_chain_a_energy_kj_mol=_mean(chain_a_values),
+        mean_chain_b_energy_kj_mol=_mean(chain_b_values),
+        frame_count=len(delta_values),
+        production_steps=production_steps,
+        equilibration_steps=equilibration_steps,
+        sample_interval=sample_interval,
+        timestep_fs=float(timestep_fs),
+        temperature_kelvin=float(temperature_kelvin),
+        friction_per_ps=float(friction_per_ps),
+        minimized=bool(minimize),
+        chains_a=tuple(chains_a),
+        chains_b=tuple(chains_b),
+        entropy_included=False,
+        platform=simulation.context.getPlatform().getName(),
+        forcefield_files=tuple(forcefield_files),
+    )
+
+
 def _require_openmm() -> tuple[Any, Any, Any]:
     try:
         app = importlib.import_module("openmm.app")
@@ -314,6 +462,20 @@ def _create_system(app: Any, topology: Any, forcefield: Any) -> Any:
     )
 
 
+def _validate_chain_groups(
+    chains_a: list[str] | tuple[str, ...],
+    chains_b: list[str] | tuple[str, ...],
+) -> None:
+    if not chains_a:
+        raise ValueError("chains_a must contain at least one chain ID")
+    if not chains_b:
+        raise ValueError("chains_b must contain at least one chain ID")
+    overlap = set(chains_a) & set(chains_b)
+    if overlap:
+        names = ", ".join(sorted(overlap))
+        raise ValueError(f"chains_a and chains_b overlap: {names}")
+
+
 def _energy_for_topology(
     topology: Any,
     positions: Any,
@@ -338,9 +500,84 @@ def _make_simulation(topology: Any, system: Any, omm: Any, unit: Any, platform: 
     return app.Simulation(topology, system, integrator, platform_obj)
 
 
+def _make_md_simulation(
+    topology: Any,
+    system: Any,
+    omm: Any,
+    unit: Any,
+    platform: str | None,
+    *,
+    timestep_fs: float,
+    temperature_kelvin: float,
+    friction_per_ps: float,
+) -> Any:
+    app = importlib.import_module("openmm.app")
+    integrator = omm.LangevinMiddleIntegrator(
+        temperature_kelvin * unit.kelvin,
+        friction_per_ps / unit.picosecond,
+        timestep_fs * unit.femtoseconds,
+    )
+    if platform is None:
+        return app.Simulation(topology, system, integrator)
+    platform_obj = omm.Platform.getPlatformByName(platform)
+    return app.Simulation(topology, system, integrator, platform_obj)
+
+
 def _context_energy_kj_mol(context: Any, unit: Any) -> float:
     state = context.getState(getEnergy=True)
     return float(state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole))
+
+
+def _gbsa_energy_contexts(
+    topology: Any,
+    positions: Any,
+    forcefield: Any,
+    app: Any,
+    omm: Any,
+    unit: Any,
+    platform: str | None,
+    chains_a: list[str] | tuple[str, ...],
+    chains_b: list[str] | tuple[str, ...],
+    indices_a: tuple[int, ...],
+    indices_b: tuple[int, ...],
+) -> tuple[Any, Any, Any, tuple[int, ...], tuple[int, ...]]:
+    inert_integrator = lambda: omm.VerletIntegrator(0.001 * unit.picoseconds)
+    system_complex = _create_system(app, topology, forcefield)
+    topology_a, _ = _subset_topology_positions(topology, positions, chains_a, app)
+    topology_b, _ = _subset_topology_positions(topology, positions, chains_b, app)
+    system_a = _create_system(app, topology_a, forcefield)
+    system_b = _create_system(app, topology_b, forcefield)
+    if platform is None:
+        context_complex = omm.Context(system_complex, inert_integrator())
+        context_a = omm.Context(system_a, inert_integrator())
+        context_b = omm.Context(system_b, inert_integrator())
+    else:
+        platform_obj = omm.Platform.getPlatformByName(platform)
+        context_complex = omm.Context(system_complex, inert_integrator(), platform_obj)
+        context_a = omm.Context(system_a, inert_integrator(), platform_obj)
+        context_b = omm.Context(system_b, inert_integrator(), platform_obj)
+    return context_complex, context_a, context_b, indices_a, indices_b
+
+
+def _gbsa_frame_energies(
+    frame_positions: Any,
+    eval_contexts: tuple[Any, Any, Any, tuple[int, ...], tuple[int, ...]],
+    unit: Any,
+) -> tuple[float, float, float]:
+    context_complex, context_a, context_b, indices_a, indices_b = eval_contexts
+    context_complex.setPositions(frame_positions)
+    context_a.setPositions([frame_positions[i] for i in indices_a])
+    context_b.setPositions([frame_positions[i] for i in indices_b])
+    return (
+        _context_energy_kj_mol(context_complex, unit),
+        _context_energy_kj_mol(context_a, unit),
+        _context_energy_kj_mol(context_b, unit),
+    )
+
+
+def _atom_indices_for_chains(topology: Any, chains: list[str] | tuple[str, ...]) -> tuple[int, ...]:
+    wanted = set(chains)
+    return tuple(atom.index for atom in topology.atoms() if atom.residue.chain.id in wanted)
 
 
 def _add_noninterface_restraints(
@@ -435,15 +672,41 @@ def _validate_finite(name: str, value: float) -> None:
         raise ValueError(f"{name} must be finite")
 
 
+def _validate_positive_finite(name: str, value: float) -> None:
+    _validate_finite(name, value)
+    if float(value) <= 0:
+        raise ValueError(f"{name} must be > 0")
+
+
 def _validate_nonnegative_finite(name: str, value: float) -> None:
     _validate_finite(name, value)
     if float(value) < 0:
         raise ValueError(f"{name} must be non-negative")
 
 
-def _validate_max_iterations(value: int) -> None:
+def _validate_positive_int(name: str, value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be an integer > 0")
+
+
+def _validate_nonnegative_int(name: str, value: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("max_iterations must be an integer >= 0")
+        raise ValueError(f"{name} must be an integer >= 0")
+
+
+def _validate_max_iterations(value: int) -> None:
+    _validate_nonnegative_int("max_iterations", value)
+
+
+def _mean(values: list[float]) -> float:
+    return float(sum(values) / len(values))
+
+
+def _sample_std(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = _mean(values)
+    return math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
 
 
 __all__ = [
@@ -452,7 +715,9 @@ __all__ = [
     "RelaxationResult",
     "EnergyResult",
     "GBSAResult",
+    "SampledGBSAResult",
     "relax_structure",
     "openmm_potential_energy",
     "calculate_gbsa_binding_energy",
+    "calculate_sampled_gbsa_binding_energy",
 ]

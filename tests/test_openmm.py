@@ -8,6 +8,7 @@ import pytest
 
 from protein_interface.openmm import (
     calculate_gbsa_binding_energy,
+    calculate_sampled_gbsa_binding_energy,
     openmm_potential_energy,
     relax_structure,
 )
@@ -83,6 +84,34 @@ def test_gbsa_binding_energy_returns_consistent_delta():
     assert result.entropy_included is False
     assert math.isfinite(result.delta_g_kj_mol)
     assert math.isclose(result.delta_g_kj_mol, expected)
+
+
+def test_sampled_gbsa_binding_energy_samples_frames_and_warns(tmp_path):
+    pytest.importorskip("openmm")
+    sampled_fixture = _duplicated_small_chain_fixture(tmp_path)
+
+    with pytest.warns(RuntimeWarning, match="slower than single-structure GBSA"):
+        result = calculate_sampled_gbsa_binding_energy(
+            sampled_fixture,
+            chains_a=["C"],
+            chains_b=["D"],
+            production_steps=1,
+            equilibration_steps=0,
+            sample_interval=1,
+            timestep_fs=0.1,
+            random_seed=1,
+        )
+
+    assert result.frame_count == 1
+    assert result.production_steps == 1
+    assert result.equilibration_steps == 0
+    assert result.sample_interval == 1
+    assert result.chains_a == ("C",)
+    assert result.chains_b == ("D",)
+    assert result.entropy_included is False
+    assert len(result.frame_delta_g_kj_mol) == 1
+    assert math.isfinite(result.mean_delta_g_kj_mol)
+    assert math.isfinite(result.std_delta_g_kj_mol)
 
 
 def test_whole_relaxation_reduces_energy_and_writes_output(tmp_path):
@@ -162,3 +191,22 @@ def _side_max_displacement(before, after, interface_ids: set[tuple[str, int, str
         dz = before.coords[i][2] - after.coords[i][2]
         max_displacement = max(max_displacement, math.sqrt(dx * dx + dy * dy + dz * dz))
     return max_displacement
+
+
+def _duplicated_small_chain_fixture(tmp_path: Path) -> Path:
+    src = ONE_FYT.read_text().splitlines()
+    lines: list[str] = []
+    serial = 1
+    for line in src:
+        if line.startswith("ATOM") and line[21] == "C":
+            lines.append(f"{line[:6]}{serial:5d}{line[11:]}")
+            serial += 1
+    for line in src:
+        if line.startswith("ATOM") and line[21] == "C":
+            x = float(line[30:38]) + 8.0
+            lines.append(f"{line[:6]}{serial:5d}{line[11:21]}D{line[22:30]}{x:8.3f}{line[38:]}")
+            serial += 1
+    lines.append("END")
+    path = tmp_path / "sampled_gbsa_test.pdb"
+    path.write_text("\n".join(lines) + "\n")
+    return path

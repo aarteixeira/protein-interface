@@ -7,6 +7,9 @@
 - Optional `protein_interface.openmm` module for OpenMM-backed structure
   minimization, potential energy calculation, and MM-GBSA-style binding-energy
   scoring between two chain groups.
+- `calculate_sampled_gbsa_binding_energy()` for slower MD-sampled MM-GBSA
+  scoring over trajectory frames, with a runtime warning that GPU execution is
+  preferred for production use.
 - `openmm` optional dependency extra. The base package still imports without
   OpenMM installed.
 - The OpenMM helpers keep standard amino-acid residues and exclude waters or

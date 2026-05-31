@@ -203,6 +203,7 @@ coordinates.
 ```python
 from protein_interface.openmm import (
     calculate_gbsa_binding_energy,
+    calculate_sampled_gbsa_binding_energy,
     relax_structure,
 )
 
@@ -229,6 +230,7 @@ Available helpers:
 | `relax_structure(path, ...)` | OpenMM energy minimization for a whole selected structure or an interface-focused run with non-interface atoms restrained. |
 | `openmm_potential_energy(path, ...)` | Potential energy for selected chains after OpenMM hydrogen addition. |
 | `calculate_gbsa_binding_energy(path, chains_a, chains_b, ...)` | Single-structure MM-GBSA-style estimate: `G_complex - G_a - G_b`. |
+| `calculate_sampled_gbsa_binding_energy(path, chains_a, chains_b, ...)` | Slower MD-sampled MM-GBSA estimate over multiple frames. |
 
 Defaults use `amber14-all.xml` and `implicit/obc2.xml`. The module keeps
 standard amino-acid residues, excludes waters and non-protein residues before
@@ -241,6 +243,11 @@ The GBSA result is a force-field endpoint score, not PRODIGY, not experimental
 affinity, and not Poisson-Boltzmann PBSA. Entropy is not included. Relaxation
 changes coordinates, so downstream geometry metrics should be recomputed from
 the relaxed output if you want relaxed-structure descriptors.
+
+The sampled GBSA helper runs minimization, optional equilibration, and MD before
+scoring sampled frames. It warns at runtime because it is slower than the
+single-structure score and should be run on a GPU platform such as CUDA, OpenCL,
+or Metal for practical production settings.
 
 ## Metrics
 
