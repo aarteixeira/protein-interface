@@ -17,6 +17,26 @@ from protein_interface import interface_residues, load_atoms
 
 DEFAULT_FORCEFIELD_FILES = ("amber14-all.xml", "implicit/obc2.xml")
 KJ_TO_KCAL = 0.2390057361376673
+SAMPLED_GBSA_PRESETS: dict[str, dict[str, int | float]] = {
+    "short": {
+        "equilibration_steps": 5_000,
+        "production_steps": 50_000,
+        "sample_interval": 500,
+        "timestep_fs": 2.0,
+    },
+    "medium": {
+        "equilibration_steps": 250_000,
+        "production_steps": 2_500_000,
+        "sample_interval": 10_000,
+        "timestep_fs": 2.0,
+    },
+    "long": {
+        "equilibration_steps": 500_000,
+        "production_steps": 10_000_000,
+        "sample_interval": 20_000,
+        "timestep_fs": 2.0,
+    },
+}
 STANDARD_PROTEIN_RESIDUES = frozenset({
     "ALA", "ARG", "ASN", "ASP", "CYS",
     "GLN", "GLU", "GLY", "HIS", "ILE",
@@ -77,6 +97,7 @@ class SampledGBSAResult:
     mean_complex_energy_kj_mol: float
     mean_chain_a_energy_kj_mol: float
     mean_chain_b_energy_kj_mol: float
+    preset: str
     frame_count: int
     production_steps: int
     equilibration_steps: int
@@ -267,10 +288,11 @@ def calculate_sampled_gbsa_binding_energy(
     chains_b: list[str] | tuple[str, ...],
     forcefield_files: tuple[str, ...] = DEFAULT_FORCEFIELD_FILES,
     ph: float = 7.0,
-    production_steps: int = 50_000,
-    equilibration_steps: int = 5_000,
-    sample_interval: int = 500,
-    timestep_fs: float = 2.0,
+    preset: str = "short",
+    production_steps: int | None = None,
+    equilibration_steps: int | None = None,
+    sample_interval: int | None = None,
+    timestep_fs: float | None = None,
     temperature_kelvin: float = 300.0,
     friction_per_ps: float = 1.0,
     minimize: bool = True,
@@ -287,6 +309,17 @@ def calculate_sampled_gbsa_binding_energy(
     _validate_chain_groups(chains_a, chains_b)
     _validate_input_suffix(path)
     _validate_finite("ph", ph)
+    resolved = _resolve_sampled_gbsa_protocol(
+        preset=preset,
+        production_steps=production_steps,
+        equilibration_steps=equilibration_steps,
+        sample_interval=sample_interval,
+        timestep_fs=timestep_fs,
+    )
+    production_steps = int(resolved["production_steps"])
+    equilibration_steps = int(resolved["equilibration_steps"])
+    sample_interval = int(resolved["sample_interval"])
+    timestep_fs = float(resolved["timestep_fs"])
     _validate_positive_int("production_steps", production_steps)
     _validate_nonnegative_int("equilibration_steps", equilibration_steps)
     _validate_positive_int("sample_interval", sample_interval)
@@ -298,8 +331,9 @@ def calculate_sampled_gbsa_binding_energy(
 
     warnings.warn(
         "calculate_sampled_gbsa_binding_energy runs OpenMM MD before scoring; "
-        "it is slower than single-structure GBSA and is best run on a GPU "
-        "platform such as CUDA, OpenCL, or Metal.",
+        f"preset='{preset}' uses {equilibration_steps} equilibration steps and "
+        f"{production_steps} production steps. It is slower than single-structure "
+        "GBSA and is best run on a GPU platform such as CUDA, OpenCL, or Metal.",
         RuntimeWarning,
         stacklevel=2,
     )
@@ -366,6 +400,7 @@ def calculate_sampled_gbsa_binding_energy(
         mean_complex_energy_kj_mol=_mean(complex_values),
         mean_chain_a_energy_kj_mol=_mean(chain_a_values),
         mean_chain_b_energy_kj_mol=_mean(chain_b_values),
+        preset=preset,
         frame_count=len(delta_values),
         production_steps=production_steps,
         equilibration_steps=equilibration_steps,
@@ -474,6 +509,29 @@ def _validate_chain_groups(
     if overlap:
         names = ", ".join(sorted(overlap))
         raise ValueError(f"chains_a and chains_b overlap: {names}")
+
+
+def _resolve_sampled_gbsa_protocol(
+    *,
+    preset: str,
+    production_steps: int | None,
+    equilibration_steps: int | None,
+    sample_interval: int | None,
+    timestep_fs: float | None,
+) -> dict[str, int | float]:
+    if preset not in SAMPLED_GBSA_PRESETS:
+        valid = ", ".join(sorted(SAMPLED_GBSA_PRESETS))
+        raise ValueError(f"unknown sampled GBSA preset: {preset}; valid presets are: {valid}")
+    resolved = dict(SAMPLED_GBSA_PRESETS[preset])
+    if production_steps is not None:
+        resolved["production_steps"] = production_steps
+    if equilibration_steps is not None:
+        resolved["equilibration_steps"] = equilibration_steps
+    if sample_interval is not None:
+        resolved["sample_interval"] = sample_interval
+    if timestep_fs is not None:
+        resolved["timestep_fs"] = timestep_fs
+    return resolved
 
 
 def _energy_for_topology(
@@ -711,6 +769,7 @@ def _sample_std(values: list[float]) -> float:
 
 __all__ = [
     "DEFAULT_FORCEFIELD_FILES",
+    "SAMPLED_GBSA_PRESETS",
     "STANDARD_PROTEIN_RESIDUES",
     "RelaxationResult",
     "EnergyResult",

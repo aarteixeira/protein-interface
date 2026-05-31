@@ -10,6 +10,9 @@
 - `calculate_sampled_gbsa_binding_energy()` for slower MD-sampled MM-GBSA
   scoring over trajectory frames, with a runtime warning that GPU execution is
   preferred for production use.
+- `short`, `medium`, and `long` sampled-GBSA presets. `short` preserves the
+  current default, while `medium` and `long` provide ns-scale protocols for
+  more meaningful GPU runs.
 - `environment-gpu.yml` for Linux GPU OpenMM installs, pinning CUDA 12.4 and
   OpenMM 8.2-compatible packages to avoid `CUDA_ERROR_UNSUPPORTED_PTX_VERSION`
   on NVIDIA 550-series drivers.

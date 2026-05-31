@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from protein_interface.openmm import (
+    SAMPLED_GBSA_PRESETS,
     calculate_gbsa_binding_energy,
     calculate_sampled_gbsa_binding_energy,
     openmm_potential_energy,
@@ -90,11 +91,12 @@ def test_sampled_gbsa_binding_energy_samples_frames_and_warns(tmp_path):
     pytest.importorskip("openmm")
     sampled_fixture = _duplicated_small_chain_fixture(tmp_path)
 
-    with pytest.warns(RuntimeWarning, match="slower than single-structure GBSA"):
+    with pytest.warns(RuntimeWarning, match="preset='short'"):
         result = calculate_sampled_gbsa_binding_energy(
             sampled_fixture,
             chains_a=["C"],
             chains_b=["D"],
+            preset="short",
             production_steps=1,
             equilibration_steps=0,
             sample_interval=1,
@@ -103,6 +105,7 @@ def test_sampled_gbsa_binding_energy_samples_frames_and_warns(tmp_path):
         )
 
     assert result.frame_count == 1
+    assert result.preset == "short"
     assert result.production_steps == 1
     assert result.equilibration_steps == 0
     assert result.sample_interval == 1
@@ -112,6 +115,37 @@ def test_sampled_gbsa_binding_energy_samples_frames_and_warns(tmp_path):
     assert len(result.frame_delta_g_kj_mol) == 1
     assert math.isfinite(result.mean_delta_g_kj_mol)
     assert math.isfinite(result.std_delta_g_kj_mol)
+
+
+def test_sampled_gbsa_presets_are_named_protocols():
+    assert SAMPLED_GBSA_PRESETS["short"] == {
+        "equilibration_steps": 5_000,
+        "production_steps": 50_000,
+        "sample_interval": 500,
+        "timestep_fs": 2.0,
+    }
+    assert SAMPLED_GBSA_PRESETS["medium"] == {
+        "equilibration_steps": 250_000,
+        "production_steps": 2_500_000,
+        "sample_interval": 10_000,
+        "timestep_fs": 2.0,
+    }
+    assert SAMPLED_GBSA_PRESETS["long"] == {
+        "equilibration_steps": 500_000,
+        "production_steps": 10_000_000,
+        "sample_interval": 20_000,
+        "timestep_fs": 2.0,
+    }
+
+
+def test_sampled_gbsa_rejects_unknown_preset():
+    with pytest.raises(ValueError, match="unknown sampled GBSA preset"):
+        calculate_sampled_gbsa_binding_energy(
+            ONE_FYT,
+            chains_a=["A"],
+            chains_b=["C"],
+            preset="overnight",
+        )
 
 
 def test_whole_relaxation_reduces_energy_and_writes_output(tmp_path):

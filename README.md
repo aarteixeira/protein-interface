@@ -245,7 +245,7 @@ Available helpers:
 | `relax_structure(path, ...)` | OpenMM energy minimization for a whole selected structure or an interface-focused run with non-interface atoms restrained. |
 | `openmm_potential_energy(path, ...)` | Potential energy for selected chains after OpenMM hydrogen addition. |
 | `calculate_gbsa_binding_energy(path, chains_a, chains_b, ...)` | Single-structure MM-GBSA-style estimate: `G_complex - G_a - G_b`. |
-| `calculate_sampled_gbsa_binding_energy(path, chains_a, chains_b, ...)` | Slower MD-sampled MM-GBSA estimate over multiple frames. |
+| `calculate_sampled_gbsa_binding_energy(path, chains_a, chains_b, preset="short", ...)` | Slower MD-sampled MM-GBSA estimate over multiple frames. |
 
 Defaults use `amber14-all.xml` and `implicit/obc2.xml`. The module keeps
 standard amino-acid residues, excludes waters and non-protein residues before
@@ -263,6 +263,18 @@ The sampled GBSA helper runs minimization, optional equilibration, and MD before
 scoring sampled frames. It warns at runtime because it is slower than the
 single-structure score and should be run on a GPU platform such as CUDA, OpenCL,
 or Metal for practical production settings.
+
+Sampled GBSA presets:
+
+| Preset | Equilibration | Production | Sample interval | Frames | Use |
+|---|---:|---:|---:|---:|---|
+| `short` | 10 ps | 100 ps | 1 ps | 100 | Current default; smoke tests and quick checks only. |
+| `medium` | 0.5 ns | 5 ns | 20 ps | 250 | Minimum practical screen for comparing related variants. |
+| `long` | 1 ns | 20 ns | 40 ps | 500 | Better default for higher-stakes ranking; still not a guarantee of convergence. |
+
+The presets assume the default 2 fs timestep. Explicit `production_steps`,
+`equilibration_steps`, `sample_interval`, or `timestep_fs` arguments override
+the selected preset.
 
 On Linux, pass `platform="CUDA"` only after confirming OpenMM sees the CUDA
 platform:
