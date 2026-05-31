@@ -264,13 +264,14 @@ scoring sampled frames. It warns at runtime because it is slower than the
 single-structure score and should be run on a GPU platform such as CUDA, OpenCL,
 or Metal for practical production settings.
 
-Sampled GBSA presets:
+Sampled GBSA defaults to `preset="short"` so examples and quick checks finish
+quickly. Choose a longer preset only when the extra runtime is justified:
 
 | Preset | Equilibration | Production | Sample interval | Frames | Use |
 |---|---:|---:|---:|---:|---|
-| `short` | 10 ps | 100 ps | 1 ps | 100 | Current default; smoke tests and quick checks only. |
-| `medium` | 0.5 ns | 5 ns | 20 ps | 250 | Minimum practical screen for comparing related variants. |
-| `long` | 1 ns | 20 ns | 40 ps | 500 | Better default for higher-stakes ranking; still not a guarantee of convergence. |
+| `short` | 10 ps | 100 ps | 1 ps | 100 | Default. Use for smoke tests, API checks, GPU setup validation, and rough triage. Do not treat it as a stable MM-GBSA estimate. |
+| `medium` | 0.5 ns | 5 ns | 20 ps | 250 | Use for practical GPU screening of related variants after filtering with faster metrics. This is the minimum recommended preset for comparing candidates. |
+| `long` | 1 ns | 20 ns | 40 ps | 500 | Use for higher-stakes ranking of a small number of finalists, preferably with replicate runs. It is slower and still does not prove convergence. |
 
 The presets assume the default 2 fs timestep. Explicit `production_steps`,
 `equilibration_steps`, `sample_interval`, or `timestep_fs` arguments override
