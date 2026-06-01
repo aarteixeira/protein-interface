@@ -343,10 +343,9 @@ fn compute_sasa_batch(
 /// Each entry is `(coords_a, atom_names_a, residue_names_a, coords_b,
 /// atom_names_b, residue_names_b)`. Results are returned in the same order.
 ///
-/// With `parallel=True` (default), Rayon parallelises across complexes and each
-/// individual SC calculation runs single-threaded to avoid nested Rayon
-/// oversubscription. With `parallel=False`, both the batch loop and each SC
-/// calculation run serially.
+/// With `parallel=True` (default), Rayon parallelises across complexes and
+/// keeps the per-complex SC parallel sections enabled. With `parallel=False`,
+/// both the batch loop and each SC calculation run serially.
 #[pyfunction]
 #[pyo3(signature = (complexes, parallel=true, use_spatial_index=true))]
 fn compute_sc_batch(
@@ -361,7 +360,7 @@ fn compute_sc_batch(
                 .par_iter()
                 .enumerate()
                 .map(|(i, (ca, na, ra, cb, nb, rb))| {
-                    compute_sc_inner(ca, na, ra, cb, nb, rb, false, use_spatial_index)
+                    compute_sc_inner(ca, na, ra, cb, nb, rb, true, use_spatial_index)
                         .map_err(|e| (i, e))
                 })
                 .collect()

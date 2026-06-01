@@ -207,17 +207,31 @@ The gated performance test is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
 pytest tests/test_sc_performance.py -q`; it first checks value parity, then
 requires at least a 2x speedup on the larger 1FYT case.
 
-Batch SC benchmark on 24 repeated 1FYT D vs A interfaces:
+Head-to-head benchmark against the original upstream `sc-rs` CLI:
 
-| Path | Median | Per complex | Speedup |
-|---|---:|---:|---:|
-| Python loop, `compute_sc(parallel=True)` | 0.814 s | 33.9 ms | 1.00x |
-| `compute_sc_batch(parallel=True)` | 0.343 s | 14.3 ms | 2.37x |
+```bash
+python benchmark/sc_cli_head_to_head.py --original-cli /path/to/upstream/sc
+```
 
-The same POC through full `analyze_batch()` on 16 repeated 1FYT D vs A
-interfaces was 3.070 s with the old serial SC loop and 2.683 s with batched SC
-(1.14x). In that full workflow, SASA and Python-side metric aggregation still
-account for much of the runtime.
+The benchmark normalizes each case to a temporary two-chain PDB because the
+upstream CLI accepts only one chain per side. The optimized path uses
+`compute_sc_batch()` from Python on the same atom arrays. The CLI wall time
+includes subprocess startup, PDB parsing, and SC calculation; the CLI calc time
+is the upstream binary's reported SC calculation time. Values were checked
+against the upstream CLI with an absolute tolerance of `1e-4`; the maximum
+observed delta was `1.6e-5`.
+
+| Case | Atoms | SC | Median distance | Trimmed area | Max delta vs CLI |
+|---|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 895 + 963 | 0.813495416848 | 0.307996781816 | 638.028548 | 1.6e-5 |
+| 1FYT D:A | 1521 + 1479 | 0.659652723060 | 0.444390803487 | 15.117538 | 1.7e-6 |
+| 1FYT D:E vs A:B:C | 3442 + 3043 | 0.561282927487 | 0.683921852177 | 1231.563217 | 2.5e-6 |
+
+| Batch | Complexes | Original CLI wall | Original CLI calc | Optimized Python batch | Speedup vs CLI wall | Speedup vs CLI calc |
+|---|---:|---:|---:|---:|---:|---:|
+| mixed x1 | 3 | 0.782 s | 0.717 s | 0.272 s | 2.87x | 2.63x |
+| mixed x4 | 12 | 3.416 s | 3.104 s | 0.489 s | 6.98x | 6.34x |
+| mixed x8 | 24 | 6.480 s | 5.848 s | 0.865 s | 7.49x | 6.76x |
 
 ## Validation Behavior
 
