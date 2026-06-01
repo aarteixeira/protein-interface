@@ -26,8 +26,9 @@ optional B-factors. This is not a force field.
 
 The SC implementation is a local, parity-tested `sc-rs` variant. It preserves
 the Lawrence-Colman result and replaces several all-pairs searches with
-deterministic spatial indexes. See [SC Implementation and Validation](#sc-implementation-and-validation)
-for parity cases and benchmark numbers.
+deterministic spatial indexes and allocation-free broadphase probes. See
+[SC Implementation and Validation](#sc-implementation-and-validation) for
+parity cases and benchmark numbers.
 
 ## Install
 
@@ -176,6 +177,8 @@ This package vendors the MIT-licensed `sc-rs` implementation for the
 Lawrence-Colman SC calculation. The vendored version adds deterministic
 spatial-index broadphase searches for atom attention, neighbor discovery,
 opposite-side dot burial, peripheral-band trimming, and nearest-dot scoring.
+Broadphase probes that only need a boolean or nearest candidate avoid temporary
+candidate vectors.
 The legacy all-pairs path remains available through
 `compute_sc(..., use_spatial_index=False)` for parity and performance checks.
 
@@ -193,8 +196,8 @@ Local benchmark on this machine after `maturin develop --release`:
 
 | Case | Atoms | Legacy all-pairs | Spatial index | Speedup |
 |---|---:|---:|---:|---:|
-| 1FYT D vs A | 1521 + 1479 | 55.2 ms | 32.4 ms | 1.70x |
-| 1FYT D:E vs A:B:C | 3442 + 3043 | 473.2 ms | 233.1 ms | 2.03x |
+| 1FYT D vs A | 1521 + 1479 | 54.4 ms | 33.3 ms | 1.63x |
+| 1FYT D:E vs A:B:C | 3442 + 3043 | 670.7 ms | 229.6 ms | 2.92x |
 
 The gated performance test is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
 pytest tests/test_sc_performance.py -q`; it first checks value parity, then
@@ -413,8 +416,8 @@ Not included:
 
 - [`sc-rs`](https://github.com/cytokineking/sc-rs), MIT license. This package
   vendors `sc-rs` for the Lawrence-Colman SC metric and adds deterministic
-  spatial-index broadphase searches while keeping a legacy all-pairs parity
-  path.
+  spatial-index broadphase searches and allocation-free candidate probes while
+  keeping a legacy all-pairs parity path.
 - Lawrence MC and Colman PM. Shape complementarity at protein/protein
   interfaces. *Journal of Molecular Biology* 234:946-950 (1993).
   DOI: [10.1006/jmbi.1993.1648](https://doi.org/10.1006/jmbi.1993.1648).

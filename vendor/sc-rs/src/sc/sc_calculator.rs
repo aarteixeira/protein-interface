@@ -68,7 +68,7 @@ impl ScCalculator {
 						return false;
 					}
 					if let Some(index) = &unburied_index {
-						!index.candidates(sdots[idx].coor, peripheral_band).into_iter().any(|j| {
+						!index.any_candidate(sdots[idx].coor, peripheral_band, |j| {
 							sdots[idx].coor.distance_squared(sdots[j].coor) <= peripheral_band2
 						})
 					} else {
@@ -117,18 +117,28 @@ impl ScCalculator {
 			};
 			let pairs: Vec<(f64, f64)> = my_dots.par_iter().filter_map(|&pd| {
 				let dot1 = &run_ref.dots[my][pd];
-				let mut distmin2: f64 = 9.0e20f64;
-				let mut neighbor: Option<&Dot> = None;
-				let candidates = their_index.as_ref()
-					.map(|idx| idx.nearest_candidates(dot1.coor, |dot_idx| run_ref.dots[their][dot_idx].coor))
-					.unwrap_or_else(|| their_dots.to_vec());
-				for pd2 in candidates {
-					let dot2 = &run_ref.dots[their][pd2];
-					if !dot2.buried { continue; }
-					let d2 = dot2.coor.distance_squared(dot1.coor);
-					if d2 <= distmin2 { distmin2 = d2; neighbor = Some(dot2); }
-				}
-				neighbor.map(|n| {
+				let nearest = if let Some(index) = &their_index {
+					index.nearest_candidate(
+						dot1.coor,
+						|dot_idx| run_ref.dots[their][dot_idx].coor,
+						|dot_idx| run_ref.dots[their][dot_idx].buried,
+					)
+					.map(|pd2| {
+						let dot2 = &run_ref.dots[their][pd2];
+						(dot2.coor.distance_squared(dot1.coor), dot2)
+					})
+				} else {
+					let mut distmin2: f64 = 9.0e20f64;
+					let mut neighbor: Option<&Dot> = None;
+					for &pd2 in their_dots {
+						let dot2 = &run_ref.dots[their][pd2];
+						if !dot2.buried { continue; }
+						let d2 = dot2.coor.distance_squared(dot1.coor);
+						if d2 <= distmin2 { distmin2 = d2; neighbor = Some(dot2); }
+					}
+					neighbor.map(|dot2| (distmin2, dot2))
+				};
+				nearest.map(|(distmin2, n)| {
 					let distmin = distmin2.sqrt();
 					let mut r = dot1.outnml.dot(n.outnml);
 					r *= (-(distmin*distmin) * gaussian_w).exp();

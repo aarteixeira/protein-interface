@@ -56,39 +56,67 @@ impl SpatialIndex {
 		out
 	}
 
-	pub(crate) fn candidates(&self, center: Vec3, radius: ScValue) -> Vec<usize> {
+	pub(crate) fn any_candidate<F>(&self, center: Vec3, radius: ScValue, mut predicate: F) -> bool
+	where
+		F: FnMut(usize) -> bool,
+	{
 		if self.buckets.is_empty() {
-			return Vec::new();
+			return false;
 		}
 		let layer = (radius / self.cell).ceil().max(1.0) as i64;
 		let (kx, ky, kz) = self.key(center);
-		let mut out = Vec::new();
 		for dx in -layer..=layer {
 			for dy in -layer..=layer {
 				for dz in -layer..=layer {
 					if let Some(bucket) = self.buckets.get(&(kx + dx, ky + dy, kz + dz)) {
-						out.extend(bucket.iter().copied());
+						for &idx in bucket {
+							if predicate(idx) {
+								return true;
+							}
+						}
 					}
 				}
 			}
 		}
-		out
+		false
 	}
 
-	pub(crate) fn nearest_candidates<F>(&self, center: Vec3, point_for_index: F) -> Vec<usize>
+	pub(crate) fn for_each_candidate<F>(&self, center: Vec3, radius: ScValue, mut visit: F)
 	where
-		F: Fn(usize) -> Vec3,
+		F: FnMut(usize),
 	{
 		if self.buckets.is_empty() {
-			return Vec::new();
+			return;
+		}
+		let layer = (radius / self.cell).ceil().max(1.0) as i64;
+		let (kx, ky, kz) = self.key(center);
+		for dx in -layer..=layer {
+			for dy in -layer..=layer {
+				for dz in -layer..=layer {
+					if let Some(bucket) = self.buckets.get(&(kx + dx, ky + dy, kz + dz)) {
+						for &idx in bucket {
+							visit(idx);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	pub(crate) fn nearest_candidate<F, A>(&self, center: Vec3, point_for_index: F, mut accept: A) -> Option<usize>
+	where
+		F: Fn(usize) -> Vec3,
+		A: FnMut(usize) -> bool,
+	{
+		if self.buckets.is_empty() {
+			return None;
 		}
 		let (kx, ky, kz) = self.key(center);
-		let mut out = Vec::new();
 		let mut layer = 0_i64;
 		let mut best_radius2 = ScValue::INFINITY;
+		let mut best = None;
 		let max_layer = self.max_layer_from(kx, ky, kz);
 		loop {
-			let start = out.len();
 			for dx in -layer..=layer {
 				for dy in -layer..=layer {
 					for dz in -layer..=layer {
@@ -96,16 +124,17 @@ impl SpatialIndex {
 							continue;
 						}
 						if let Some(bucket) = self.buckets.get(&(kx + dx, ky + dy, kz + dz)) {
-							out.extend(bucket.iter().copied());
+							for &idx in bucket {
+								if !accept(idx) {
+									continue;
+								}
+								let d2 = center.distance_squared(point_for_index(idx));
+								if d2 <= best_radius2 {
+									best_radius2 = d2;
+									best = Some(idx);
+								}
+							}
 						}
-					}
-				}
-			}
-			if out.len() > start {
-				for &idx in &out[start..] {
-					let d2 = center.distance_squared(point_for_index(idx));
-					if d2 < best_radius2 {
-						best_radius2 = d2;
 					}
 				}
 			}
@@ -117,7 +146,7 @@ impl SpatialIndex {
 				break;
 			}
 		}
-		out
+		best
 	}
 
 	fn max_layer_from(&self, kx: i64, ky: i64, kz: i64) -> i64 {
