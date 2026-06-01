@@ -22,6 +22,15 @@ pub struct ScResult {
     pub atoms_b: usize,
 }
 
+type ScBatchInput = (
+    Vec<[f64; 3]>,
+    Vec<String>,
+    Vec<String>,
+    Vec<[f64; 3]>,
+    Vec<String>,
+    Vec<String>,
+);
+
 fn validate_nonnegative_finite(name: &str, value: f64) -> PyResult<()> {
     if !value.is_finite() || value < 0.0 {
         return Err(PyValueError::new_err(format!(
@@ -30,6 +39,64 @@ fn validate_nonnegative_finite(name: &str, value: f64) -> PyResult<()> {
         )));
     }
     Ok(())
+}
+
+fn compute_sc_inner(
+    coords_a: &[[f64; 3]],
+    atom_names_a: &[String],
+    residue_names_a: &[String],
+    coords_b: &[[f64; 3]],
+    atom_names_b: &[String],
+    residue_names_b: &[String],
+    parallel: bool,
+    use_spatial_index: bool,
+) -> Result<ScResult, String> {
+    let na = coords_a.len();
+    let nb = coords_b.len();
+
+    if na == 0 || nb == 0 {
+        return Err("each atom group must contain at least one atom".to_string());
+    }
+    if atom_names_a.len() != na || residue_names_a.len() != na {
+        return Err(
+            "coords_a, atom_names_a, residue_names_a must all have the same length".to_string(),
+        );
+    }
+    if atom_names_b.len() != nb || residue_names_b.len() != nb {
+        return Err(
+            "coords_b, atom_names_b, residue_names_b must all have the same length".to_string(),
+        );
+    }
+
+    let mut calc = ScCalculator::new();
+    calc.settings_mut().enable_parallel = parallel;
+    calc.settings_mut().use_spatial_index = use_spatial_index;
+
+    for i in 0..na {
+        let mut a = Atom::new();
+        a.coor = Vec3::new(coords_a[i][0], coords_a[i][1], coords_a[i][2]);
+        a.atom = atom_names_a[i].clone();
+        a.residue = residue_names_a[i].clone();
+        calc.add_atom(0, a).map_err(|e| e.to_string())?;
+    }
+
+    for i in 0..nb {
+        let mut a = Atom::new();
+        a.coor = Vec3::new(coords_b[i][0], coords_b[i][1], coords_b[i][2]);
+        a.atom = atom_names_b[i].clone();
+        a.residue = residue_names_b[i].clone();
+        calc.add_atom(1, a).map_err(|e| e.to_string())?;
+    }
+
+    let results = calc.calc().map_err(|e| e.to_string())?;
+
+    Ok(ScResult {
+        sc: results.sc,
+        median_distance: results.distance,
+        trimmed_area: results.area,
+        atoms_a: results.surfaces[0].n_atoms,
+        atoms_b: results.surfaces[1].n_atoms,
+    })
 }
 
 #[pymethods]
@@ -59,6 +126,7 @@ impl ScResult {
 #[pyfunction]
 #[pyo3(signature = (coords_a, atom_names_a, residue_names_a, coords_b, atom_names_b, residue_names_b, parallel=true, use_spatial_index=true))]
 fn compute_sc(
+    py: Python<'_>,
     coords_a: Vec<[f64; 3]>,
     atom_names_a: Vec<String>,
     residue_names_a: Vec<String>,
@@ -68,58 +136,19 @@ fn compute_sc(
     parallel: bool,
     use_spatial_index: bool,
 ) -> PyResult<ScResult> {
-    let na = coords_a.len();
-    let nb = coords_b.len();
-
-    if na == 0 || nb == 0 {
-        return Err(PyValueError::new_err(
-            "each atom group must contain at least one atom",
-        ));
-    }
-    if atom_names_a.len() != na || residue_names_a.len() != na {
-        return Err(PyValueError::new_err(
-            "coords_a, atom_names_a, residue_names_a must all have the same length",
-        ));
-    }
-    if atom_names_b.len() != nb || residue_names_b.len() != nb {
-        return Err(PyValueError::new_err(
-            "coords_b, atom_names_b, residue_names_b must all have the same length",
-        ));
-    }
-
-    let mut calc = ScCalculator::new();
-    calc.settings_mut().enable_parallel = parallel;
-    calc.settings_mut().use_spatial_index = use_spatial_index;
-
-    for i in 0..na {
-        let mut a = Atom::new();
-        a.coor = Vec3::new(coords_a[i][0], coords_a[i][1], coords_a[i][2]);
-        a.atom = atom_names_a[i].clone();
-        a.residue = residue_names_a[i].clone();
-        calc.add_atom(0, a)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    }
-
-    for i in 0..nb {
-        let mut a = Atom::new();
-        a.coor = Vec3::new(coords_b[i][0], coords_b[i][1], coords_b[i][2]);
-        a.atom = atom_names_b[i].clone();
-        a.residue = residue_names_b[i].clone();
-        calc.add_atom(1, a)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    }
-
-    let results = calc
-        .calc()
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-    Ok(ScResult {
-        sc: results.sc,
-        median_distance: results.distance,
-        trimmed_area: results.area,
-        atoms_a: results.surfaces[0].n_atoms,
-        atoms_b: results.surfaces[1].n_atoms,
+    py.allow_threads(|| {
+        compute_sc_inner(
+            &coords_a,
+            &atom_names_a,
+            &residue_names_a,
+            &coords_b,
+            &atom_names_b,
+            &residue_names_b,
+            parallel,
+            use_spatial_index,
+        )
     })
+    .map_err(PyValueError::new_err)
 }
 
 /// Per-atom solvent-accessible surface area (Shrake-Rupley, Å²).
@@ -293,16 +322,61 @@ fn compute_sasa_batch(
         if parallel {
             structures
                 .par_iter()
-                .map(|(c, an, rn)| sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table))
+                .map(|(c, an, rn)| {
+                    sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table)
+                })
                 .collect()
         } else {
             structures
                 .iter()
-                .map(|(c, an, rn)| sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table))
+                .map(|(c, an, rn)| {
+                    sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table)
+                })
                 .collect()
         }
     });
     Ok(result)
+}
+
+/// Batch Lawrence-Colman Shape Complementarity over many atom-pair systems.
+///
+/// Each entry is `(coords_a, atom_names_a, residue_names_a, coords_b,
+/// atom_names_b, residue_names_b)`. Results are returned in the same order.
+///
+/// With `parallel=True` (default), Rayon parallelises across complexes and each
+/// individual SC calculation runs single-threaded to avoid nested Rayon
+/// oversubscription. With `parallel=False`, both the batch loop and each SC
+/// calculation run serially.
+#[pyfunction]
+#[pyo3(signature = (complexes, parallel=true, use_spatial_index=true))]
+fn compute_sc_batch(
+    py: Python<'_>,
+    complexes: Vec<ScBatchInput>,
+    parallel: bool,
+    use_spatial_index: bool,
+) -> PyResult<Vec<ScResult>> {
+    let results: Result<Vec<ScResult>, (usize, String)> = py.allow_threads(|| {
+        if parallel {
+            complexes
+                .par_iter()
+                .enumerate()
+                .map(|(i, (ca, na, ra, cb, nb, rb))| {
+                    compute_sc_inner(ca, na, ra, cb, nb, rb, false, use_spatial_index)
+                        .map_err(|e| (i, e))
+                })
+                .collect()
+        } else {
+            complexes
+                .iter()
+                .enumerate()
+                .map(|(i, (ca, na, ra, cb, nb, rb))| {
+                    compute_sc_inner(ca, na, ra, cb, nb, rb, false, use_spatial_index)
+                        .map_err(|e| (i, e))
+                })
+                .collect()
+        }
+    });
+    results.map_err(|(i, e)| PyValueError::new_err(format!("complex {}: {}", i, e)))
 }
 
 #[pymodule]
@@ -312,6 +386,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_sasa, m)?)?;
     m.add_function(wrap_pyfunction!(unknown_sasa_radius_atoms, m)?)?;
     m.add_function(wrap_pyfunction!(compute_sasa_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_sc_batch, m)?)?;
     m.add_function(wrap_pyfunction!(count_hbonds, m)?)?;
     m.add_function(wrap_pyfunction!(count_salt_bridges, m)?)?;
     Ok(())

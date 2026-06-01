@@ -46,6 +46,7 @@ from protein_interface._core import (
     compute_sasa,
     compute_sasa_batch,
     compute_sc,
+    compute_sc_batch,
     count_hbonds,
     unknown_sasa_radius_atoms,
 )
@@ -1326,7 +1327,8 @@ def analyze_batch(
 
     All 3·N SASA computations (each complex needs sasa(A), sasa(B), sasa(A∪B))
     are pushed into one Rust call that releases the GIL and parallelises across
-    Rayon threads. The per-complex Python orchestration runs serially after.
+    Rayon threads. When SC is enabled, SC is also computed through one batched
+    Rust call before the per-complex Python orchestration runs serially.
 
     With ``parallel=True`` (default), set the environment variable
     ``RAYON_NUM_THREADS`` to control thread count if needed. When dispatching
@@ -1372,21 +1374,33 @@ def analyze_batch(
     else:
         all_sasa = []
 
+    if include_sc and "sc" in enabled_metrics:
+        sc_inputs = [
+            (a.coords, a.atom_names, a.residue_names, b.coords, b.atom_names, b.residue_names)
+            for a, b in complexes
+        ]
+        try:
+            sc_results = compute_sc_batch(sc_inputs, parallel)
+        except Exception as exc:
+            if strict:
+                raise ValueError(f"shape complementarity failed: {exc}") from exc
+            sc_values = [float("nan")] * len(complexes)
+        else:
+            sc_values = [float(r.sc) for r in sc_results]
+    else:
+        sc_values = [
+            float("nan") if "sc" in enabled_metrics else None
+            for _ in complexes
+        ]
+
     results: list[InterfaceResult] = []
     for i, (a, b) in enumerate(complexes):
         sasa_a = all_sasa[3 * i] if needs_sasa else None
         sasa_b = all_sasa[3 * i + 1] if needs_sasa else None
         sasa_ab = all_sasa[3 * i + 2] if needs_sasa else None
-        # SC's internal Rayon mirrors the batch parallel flag — when the caller
-        # is inside a ProcessPool (parallel=False), keep SC single-threaded too.
-        sc_value = (
-            _compute_sc_value(a, b, parallel, strict=strict)
-            if include_sc and "sc" in enabled_metrics
-            else (float("nan") if "sc" in enabled_metrics else None)
-        )
         results.append(_analyze_from_sasa(
             a, b, combineds[i], sasa_a, sasa_b, sasa_ab,
-            sc_value=sc_value,
+            sc_value=sc_values[i],
             enabled_metrics=enabled_metrics,
             interface_cutoff=interface_cutoff,
             hbond_cutoff=hbond_cutoff,

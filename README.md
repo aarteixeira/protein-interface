@@ -169,6 +169,10 @@ The low-level `compute_sc()` binding uses the spatial-indexed Rust path by
 default. Pass `use_spatial_index=False` only for legacy parity or performance
 checks.
 
+For repeated in-memory SC calculations, `compute_sc_batch()` accepts a list of
+atom-array pairs and returns one `ScResult` per pair. `analyze_batch()` uses this
+batched SC path when SC is enabled.
+
 For the full metric set, call `load_atoms()` and then `analyze()`.
 
 ## SC Implementation and Validation
@@ -202,6 +206,18 @@ Local benchmark on this machine after `maturin develop --release`:
 The gated performance test is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
 pytest tests/test_sc_performance.py -q`; it first checks value parity, then
 requires at least a 2x speedup on the larger 1FYT case.
+
+Batch SC benchmark on 24 repeated 1FYT D vs A interfaces:
+
+| Path | Median | Per complex | Speedup |
+|---|---:|---:|---:|
+| Python loop, `compute_sc(parallel=True)` | 0.814 s | 33.9 ms | 1.00x |
+| `compute_sc_batch(parallel=True)` | 0.343 s | 14.3 ms | 2.37x |
+
+The same POC through full `analyze_batch()` on 16 repeated 1FYT D vs A
+interfaces was 3.070 s with the old serial SC loop and 2.683 s with batched SC
+(1.14x). In that full workflow, SASA and Python-side metric aggregation still
+account for much of the runtime.
 
 ## Validation Behavior
 
@@ -384,6 +400,7 @@ python -m pytest -q
 The test suite includes:
 
 - unit tests for Rust SASA, H-bond, salt-bridge, and validation behavior
+- SC batch tests against serial `compute_sc`
 - parser and intake-path equivalence tests for PDB, mmCIF, Biopython, Biotite,
   and BoltzGen-shaped structures
 - FreeSASA comparison tests for SASA when `freesasa` is installed

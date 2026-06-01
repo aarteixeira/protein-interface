@@ -3,6 +3,7 @@ from protein_interface._core import (
     compute_sasa,
     compute_sasa_batch,
     compute_sc,
+    compute_sc_batch,
     count_hbonds,
     count_salt_bridges as count_salt_bridge_atom_pairs,
     unknown_sasa_radius_atoms,
@@ -54,6 +55,7 @@ from protein_interface.io import (
 
 __all__ = [
     "compute_sc",
+    "compute_sc_batch",
     "compute_sasa",
     "count_hbonds",
     "ScResult",
