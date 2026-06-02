@@ -147,7 +147,7 @@ impl SurfaceGenerator {
 			let snapshot: Vec<(usize, usize, bool)> = (0..atoms_len).map(|i| {
 				let a1 = &self.run.atoms[i];
 				let other = if a1.molecule == 0 { &index1 } else { &index0 };
-				let close = other.candidates(a1.coor, self.settings.separation_cutoff).into_iter().any(|j| {
+				let close = other.any_candidate(a1.coor, self.settings.separation_cutoff, |j| {
 					a1.distance_squared(&self.run.atoms[j]) < sep2
 				});
 				(i, a1.molecule, close)
@@ -245,13 +245,10 @@ impl SurfaceGenerator {
 			let mut buried_by_indices: Vec<usize> = Vec::new();
 			// count not used; rely on buried_by_indices length
 			let search_radius = atom1.radius + radmax + 2.0 * rp;
-			let candidates = atom_index.as_ref()
-				.map(|idx| idx.candidates(atom1.coor, search_radius))
-				.unwrap_or_else(|| (0..len).collect());
-			for j in candidates {
-				if j == i { continue; }
+			let mut visit_candidate = |j: usize| -> Result<(), SurfaceCalculatorError> {
+				if j == i { return Ok(()); }
 				let atom2 = &atoms[j];
-				if atom1.natom == atom2.natom { continue; }
+				if atom1.natom == atom2.natom { return Ok(()); }
 				let d2 = atom1.distance_squared(atom2);
 				if atom1.molecule == atom2.molecule {
 					if d2 <= 0.0001 {
@@ -266,6 +263,20 @@ impl SurfaceGenerator {
 				} else {
 					let bridge = atom1.radius + atom2.radius + 2.0 * rp;
 					if d2 < bridge * bridge { buried_by_indices.push(j); }
+				}
+				Ok(())
+			};
+			if let Some(index) = &atom_index {
+				let mut err = None;
+				index.for_each_candidate(atom1.coor, search_radius, |j| {
+					if err.is_none() {
+						err = visit_candidate(j).err();
+					}
+				});
+				if let Some(err) = err { return Err(err); }
+			} else {
+				for j in 0..len {
+					visit_candidate(j)?;
 				}
 			}
 			let center = atom1.coor;
@@ -363,20 +374,26 @@ impl SurfaceGenerator {
 					if coll { continue; }
 					// burial check against opposite molecule
 					let other_mol = if a_i.molecule == 0 { 1 } else { 0 };
-					let mut buried = false;
-					let candidates = if use_spatial_index {
+					let buried = if use_spatial_index {
 						let other_index = if other_mol == 0 { &index0 } else { &index1 };
-						other_index.candidates(pcen, radmax + rp)
+						other_index.any_candidate(pcen, radmax + rp, |bi| {
+							let b = &atoms[bi];
+							if b.molecule != other_mol { return false; }
+							let erl = b.radius + rp;
+							let d = pcen.distance_squared(b.coor);
+							d <= erl*erl
+						})
 					} else {
-						(0..atoms.len()).collect()
+						let mut buried = false;
+						for bi in 0..atoms.len() {
+							let b = &atoms[bi];
+							if b.molecule != other_mol { continue; }
+							let erl = b.radius + rp;
+							let d = pcen.distance_squared(b.coor);
+							if d <= erl*erl { buried = true; break; }
+						}
+						buried
 					};
-					for bi in candidates {
-						let b = &atoms[bi];
-						if b.molecule != other_mol { continue; }
-						let erl = b.radius + rp;
-						let d = pcen.distance_squared(b.coor);
-						if d <= erl*erl { buried = true; break; }
-					}
 					let outnml = if rp <= 0.0 { point - a_i.coor } else { (pcen - point) / rp };
 					dots.push(Dot { coor: point, outnml, area, buried, kind: DotKind::Contact, atom_index: i });
 				}
@@ -740,20 +757,26 @@ impl SurfaceGenerator {
 					let pcen = pijk;
 					let outnml = if rp <= 0.0 { point - atoms[atom_index].coor } else { (pcen - point) / rp };
 					let other_mol = if molecule == 0 { 1 } else { 0 };
-					let mut buried = false;
-					let candidates = if use_spatial_index {
+					let buried = if use_spatial_index {
 						let other_index = if other_mol == 0 { &index0 } else { &index1 };
-						other_index.candidates(pcen, radmax + rp)
+						other_index.any_candidate(pcen, radmax + rp, |bi| {
+							let b = &atoms[bi];
+							if b.molecule != other_mol { return false; }
+							let erl = b.radius + rp;
+							let d = pcen.distance_squared(b.coor);
+							d <= erl*erl
+						})
 					} else {
-						(0..atoms.len()).collect()
+						let mut buried = false;
+						for bi in 0..atoms.len() {
+							let b = &atoms[bi];
+							if b.molecule != other_mol { continue; }
+							let erl = b.radius + rp;
+							let d = pcen.distance_squared(b.coor);
+							if d <= erl*erl { buried = true; break; }
+						}
+						buried
 					};
-					for bi in candidates {
-						let b = &atoms[bi];
-						if b.molecule != other_mol { continue; }
-						let erl = b.radius + rp;
-						let d = pcen.distance_squared(b.coor);
-						if d <= erl*erl { buried = true; break; }
-					}
 					let dot = Dot { coor: point, outnml, area, buried, kind: DotKind::Cavity, atom_index };
 					if molecule == 0 { d0.push(dot); } else { d1.push(dot); }
 				}

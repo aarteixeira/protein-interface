@@ -3,8 +3,11 @@ from protein_interface._core import (
     compute_sasa,
     compute_sasa_batch,
     compute_sc,
+    compute_sc_batch,
     count_hbonds,
+    count_salt_bridge_residue_pairs,
     count_salt_bridges as count_salt_bridge_atom_pairs,
+    find_contact_pairs,
     unknown_sasa_radius_atoms,
 )
 from protein_interface.batch import score_many
@@ -54,6 +57,7 @@ from protein_interface.io import (
 
 __all__ = [
     "compute_sc",
+    "compute_sc_batch",
     "compute_sasa",
     "count_hbonds",
     "ScResult",
@@ -63,6 +67,8 @@ __all__ = [
     "from_boltzgen_refold",
     "score_many",
     "count_salt_bridge_atom_pairs",
+    "count_salt_bridge_residue_pairs",
+    "find_contact_pairs",
     "unknown_sasa_radius_atoms",
     "compute_sasa_batch",
     "AtomArrays",

@@ -11,9 +11,7 @@ The package computes:
 
 - solvent accessible surface area (SASA) and buried surface area (dSASA)
 - Lawrence-Colman shape complementarity through a vendored
-  [`sc-rs`](https://github.com/cytokineking/sc-rs) implementation with
-  spatial-index broadphase searches; the bundled larger 1FYT benchmark is about
-  2x faster than the legacy all-pairs path with identical SC output
+  [`sc-rs`](https://github.com/cytokineking/sc-rs) implementation
 - distance-based H-bonds, salt bridges, aromatic contacts, cation-pi contacts,
   disulfides, and atom contacts
 - buried unsatisfied polar atoms
@@ -24,10 +22,28 @@ The package computes:
 All metrics are derived from atom coordinates, residue names, atom names, and
 optional B-factors. This is not a force field.
 
-The SC implementation is a local, parity-tested `sc-rs` variant. It preserves
-the Lawrence-Colman result and replaces several all-pairs searches with
-deterministic spatial indexes. See [SC Implementation and Validation](#sc-implementation-and-validation)
-for parity cases and benchmark numbers.
+The SC implementation is a local, parity-tested `sc-rs` variant. It keeps the
+Lawrence-Colman calculation and replaces several all-pairs searches with
+deterministic spatial indexes and allocation-free broadphase probes. In local
+head-to-head tests, batched SC was 2.87-7.49x faster than the original upstream
+`sc-rs` CLI on the same normalized complexes, with a maximum observed value
+delta of `1.6e-5`. See
+[SC Implementation and Validation](#sc-implementation-and-validation).
+
+SASA is computed by a Rust Shrake-Rupley kernel with spatial neighbor filtering
+and Rayon parallelism across atoms and batches. On the bundled mixed SASA batch,
+the optimized path was 6.94x faster than the serial compatibility path, with
+identical per-atom SASA values. Against FreeSASA, the same kernel was 5.51-6.87x
+faster at `n_points=960` on bundled complexes, with high atom- and
+residue-level correlation under different radii tables. See
+[SASA Implementation and Validation](#sasa-implementation-and-validation).
+
+Contact-family metrics use Rust spatial contact enumeration instead of dense
+all-pairs distance matrices. Salt bridges are counted as unique acidic/basic
+residue pairs in Rust, matching the public Python definition. On the largest
+bundled complex, the contact summary reference dropped from 264.2 ms to 3.1 ms
+and salt-bridge counting from 137.8 ms to 5.7 ms, with identical values. See
+[Contact-Metric Implementation and Validation](#contact-metric-implementation-and-validation).
 
 ## Install
 
@@ -111,6 +127,109 @@ results = analyze_batch(complexes)
 `analyze_batch()` batches the SASA work into one Rust call and returns one
 `InterfaceResult` per input complex.
 
+## SASA Implementation and Validation
+
+SASA uses the Shrake-Rupley algorithm with the same MS-style radii table used by
+SC. The Rust kernel builds a spatial hash over inflated atom radii, filters
+neighbors that cannot bury a surface point, and parallelizes independent
+per-atom SASA calculations with Rayon. `compute_sasa(..., parallel=True)` is the
+default. Pass `parallel=False` for serial parity or performance checks.
+
+SASA parity is tested on full per-atom arrays, not only totals:
+
+| Case | Chains | Check |
+|---|---|---|
+| `tests/data/nb_ag_test.pdb` | A vs L | nanobody-antigen complex |
+| `tests/data/1fyt.pdb` | D vs A | single-chain TCR/MHC interface |
+| `tests/data/1fyt.pdb` | D:E vs A:B:C | larger multi-chain interface |
+
+The benchmark is:
+
+```bash
+python benchmark/sasa_speed.py
+```
+
+Local benchmark on this machine after `maturin develop --release`, using
+`n_points=92` and the median of 9 timed runs:
+
+| Case | Atoms | Serial | Optimized | Speedup | Max per-atom delta |
+|---|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 1858 | 11.4 ms | 2.0 ms | 5.60x | 0.0e+00 |
+| 1FYT D:A | 3000 | 17.3 ms | 3.0 ms | 5.85x | 0.0e+00 |
+| 1FYT D:E vs A:B:C | 6485 | 39.7 ms | 7.4 ms | 5.34x | 0.0e+00 |
+
+| Batch | Structures | Serial | Optimized | Speedup | Max per-atom delta |
+|---|---:|---:|---:|---:|---:|
+| mixed x1 | 9 | 135.6 ms | 19.5 ms | 6.94x | 0.0e+00 |
+
+The gated performance check is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
+pytest tests/test_sasa_performance.py -q`; it first checks exact per-atom
+parity, then requires at least a 2x speedup on the mixed bundled batch.
+
+FreeSASA comparison uses the same selected heavy atoms and times calculation
+only on prebuilt structures:
+
+```bash
+python benchmark/sasa_vs_freesasa.py
+```
+
+These values are not expected to be identical. This package uses the same
+MS-style radii table as the SC calculation; FreeSASA uses its default
+classifier/radii. The useful checks are total SASA ratio, atom-level
+correlation, residue-level correlation, and residue-level absolute difference.
+
+Local benchmark at `n_points=960`, median of 5 timed runs:
+
+| Case | Atoms | Ours | FreeSASA | Speedup vs FreeSASA | Total ratio | Atom r | Residue r | Residue MAD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 1858 | 9.6 ms | 53.0 ms | 5.51x | 0.997 | 0.9922 | 0.9990 | 1.29 Å² |
+| 1FYT D:A | 3000 | 13.9 ms | 82.0 ms | 5.90x | 0.997 | 0.9918 | 0.9990 | 1.85 Å² |
+| 1FYT D:E vs A:B:C | 6485 | 25.9 ms | 178.1 ms | 6.87x | 0.988 | 0.9920 | 0.9989 | 1.70 Å² |
+
+At the default `analyze()` screening setting, `n_points=92`, the same comparison
+gave 4.23-4.65x speedup versus FreeSASA, with total SASA ratios from 0.989 to
+1.002 and residue correlations from 0.9961 to 0.9964.
+
+## Contact-Metric Implementation and Validation
+
+The contact-family metrics use `find_contact_pairs()` in Rust to enumerate
+atom pairs within the requested cutoff. The same contact list feeds
+`atomic_contacts`, interface-residue sets, charge summaries, gly/pro fraction,
+and PRODIGY contact bins. This avoids materializing dense `N_a x N_b` distance
+matrices in the default `analyze()` path.
+
+Salt bridges use a separate Rust path that counts unique residue-residue pairs.
+This is different from the low-level atom-pair helper: multiple charged atom
+contacts between the same two residues still count as one public salt bridge.
+
+Parity is tested against dense/Python references on:
+
+| Case | Chains | Check |
+|---|---|---|
+| `tests/data/nb_ag_test.pdb` | A vs L | nanobody-antigen complex |
+| `tests/data/1fyt.pdb` | D vs A | single-chain TCR/MHC interface |
+| `tests/data/1fyt.pdb` | D:E vs A:B:C | larger multi-chain interface |
+
+Benchmark:
+
+```bash
+python benchmark/contact_metric_speed.py
+```
+
+Local benchmark after `maturin develop --release`, median timed runs. The
+reference columns use the previous dense/Python implementation style and the
+script asserts identical values before timing each case.
+
+| Case | Atoms | Dense contact summary | Spatial contact summary | Speedup | Python salt | Rust salt | Speedup | Full `analyze()` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 1858 | 24.4 ms | 1.0 ms | 23.85x | 5.6 ms | 0.9 ms | 6.52x | 95.1 ms |
+| 1FYT D:A | 3000 | 64.4 ms | 1.2 ms | 54.17x | 22.6 ms | 1.7 ms | 13.30x | 81.1 ms |
+| 1FYT D:E vs A:B:C | 6485 | 264.2 ms | 3.1 ms | 84.58x | 137.8 ms | 5.7 ms | 24.22x | 364.1 ms |
+
+The gated performance check is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
+pytest tests/test_contact_performance.py -q`; it verifies equality first, then
+requires at least a 2x speedup for both optimized paths on `1fyt` D:E vs A:B:C.
+
 ## Loading Structures
 
 `load_atoms()` accepts `.pdb`, `.ent`, `.cif`, and `.mmcif` files:
@@ -168,6 +287,10 @@ The low-level `compute_sc()` binding uses the spatial-indexed Rust path by
 default. Pass `use_spatial_index=False` only for legacy parity or performance
 checks.
 
+For repeated in-memory SC calculations, `compute_sc_batch()` accepts a list of
+atom-array pairs and returns one `ScResult` per pair. `analyze_batch()` uses this
+batched SC path when SC is enabled.
+
 For the full metric set, call `load_atoms()` and then `analyze()`.
 
 ## SC Implementation and Validation
@@ -176,6 +299,8 @@ This package vendors the MIT-licensed `sc-rs` implementation for the
 Lawrence-Colman SC calculation. The vendored version adds deterministic
 spatial-index broadphase searches for atom attention, neighbor discovery,
 opposite-side dot burial, peripheral-band trimming, and nearest-dot scoring.
+Broadphase probes that only need a boolean or nearest candidate avoid temporary
+candidate vectors.
 The legacy all-pairs path remains available through
 `compute_sc(..., use_spatial_index=False)` for parity and performance checks.
 
@@ -193,12 +318,38 @@ Local benchmark on this machine after `maturin develop --release`:
 
 | Case | Atoms | Legacy all-pairs | Spatial index | Speedup |
 |---|---:|---:|---:|---:|
-| 1FYT D vs A | 1521 + 1479 | 55.2 ms | 32.4 ms | 1.70x |
-| 1FYT D:E vs A:B:C | 3442 + 3043 | 473.2 ms | 233.1 ms | 2.03x |
+| 1FYT D vs A | 1521 + 1479 | 54.4 ms | 33.3 ms | 1.63x |
+| 1FYT D:E vs A:B:C | 3442 + 3043 | 670.7 ms | 229.6 ms | 2.92x |
 
 The gated performance test is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
 pytest tests/test_sc_performance.py -q`; it first checks value parity, then
 requires at least a 2x speedup on the larger 1FYT case.
+
+Head-to-head benchmark against the original upstream `sc-rs` CLI:
+
+```bash
+python benchmark/sc_cli_head_to_head.py --original-cli /path/to/upstream/sc
+```
+
+The benchmark normalizes each case to a temporary two-chain PDB because the
+upstream CLI accepts only one chain per side. The optimized path uses
+`compute_sc_batch()` from Python on the same atom arrays. The CLI wall time
+includes subprocess startup, PDB parsing, and SC calculation; the CLI calc time
+is the upstream binary's reported SC calculation time. Values were checked
+against the upstream CLI with an absolute tolerance of `1e-4`; the maximum
+observed delta was `1.6e-5`.
+
+| Case | Atoms | SC | Median distance | Trimmed area | Max delta vs CLI |
+|---|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 895 + 963 | 0.813495416848 | 0.307996781816 | 638.028548 | 1.6e-5 |
+| 1FYT D:A | 1521 + 1479 | 0.659652723060 | 0.444390803487 | 15.117538 | 1.7e-6 |
+| 1FYT D:E vs A:B:C | 3442 + 3043 | 0.561282927487 | 0.683921852177 | 1231.563217 | 2.5e-6 |
+
+| Batch | Complexes | Original CLI wall | Original CLI calc | Optimized Python batch | Speedup vs CLI wall | Speedup vs CLI calc |
+|---|---:|---:|---:|---:|---:|---:|
+| mixed x1 | 3 | 0.782 s | 0.717 s | 0.272 s | 2.87x | 2.63x |
+| mixed x4 | 12 | 3.416 s | 3.104 s | 0.489 s | 6.98x | 6.34x |
+| mixed x8 | 24 | 6.480 s | 5.848 s | 0.865 s | 7.49x | 6.76x |
 
 ## Validation Behavior
 
@@ -381,6 +532,8 @@ python -m pytest -q
 The test suite includes:
 
 - unit tests for Rust SASA, H-bond, salt-bridge, and validation behavior
+- SASA parity tests across serial, per-atom parallel, and batched parallel paths
+- SC batch tests against serial `compute_sc`
 - parser and intake-path equivalence tests for PDB, mmCIF, Biopython, Biotite,
   and BoltzGen-shaped structures
 - FreeSASA comparison tests for SASA when `freesasa` is installed
@@ -395,7 +548,7 @@ Included:
 - strict input validation by default
 - PDB/mmCIF loading through Biopython
 - Rust kernels for SASA, H-bond counts, salt-bridge atom-pair counts, and SC
-- batched SASA execution through Rayon
+- per-atom and batched SASA execution through Rayon
 - optional OpenMM whole-structure relaxation, interface-restrained relaxation,
   potential energy, and MM-GBSA-style endpoint scoring
 
@@ -413,8 +566,8 @@ Not included:
 
 - [`sc-rs`](https://github.com/cytokineking/sc-rs), MIT license. This package
   vendors `sc-rs` for the Lawrence-Colman SC metric and adds deterministic
-  spatial-index broadphase searches while keeping a legacy all-pairs parity
-  path.
+  spatial-index broadphase searches and allocation-free candidate probes while
+  keeping a legacy all-pairs parity path.
 - Lawrence MC and Colman PM. Shape complementarity at protein/protein
   interfaces. *Journal of Molecular Biology* 234:946-950 (1993).
   DOI: [10.1006/jmbi.1993.1648](https://doi.org/10.1006/jmbi.1993.1648).

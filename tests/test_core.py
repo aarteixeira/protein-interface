@@ -1,7 +1,7 @@
 """Tests for pysc._core (the Rust extension module)."""
 import pytest
 
-from protein_interface._core import ScResult, compute_sc
+from protein_interface._core import ScResult, compute_sc, compute_sc_batch
 
 # 10 ALA CA atoms per group, spaced 3.8 Å apart, ~5 Å between groups.
 # Enough to generate surface dots; chosen to avoid empty-surface errors.
@@ -31,6 +31,30 @@ def test_compute_sc_parallel_false():
     assert r1.sc == pytest.approx(r2.sc, abs=1e-9)
     assert r1.median_distance == pytest.approx(r2.median_distance, abs=1e-9)
     assert r1.trimmed_area == pytest.approx(r2.trimmed_area, abs=1e-9)
+
+
+def test_compute_sc_batch_matches_serial():
+    """Batched SC must return the same values as serial compute_sc calls."""
+    inputs = [
+        (_COORDS_A, _NAMES_A, _RES_A, _COORDS_B, _NAMES_B, _RES_B),
+        (_COORDS_B, _NAMES_B, _RES_B, _COORDS_A, _NAMES_A, _RES_A),
+    ]
+    serial = [
+        compute_sc(*inputs[0], parallel=False),
+        compute_sc(*inputs[1], parallel=False),
+    ]
+    batched = compute_sc_batch(inputs, parallel=True)
+    assert len(batched) == 2
+    for expected, observed in zip(serial, batched):
+        assert observed.sc == pytest.approx(expected.sc, abs=1e-9)
+        assert observed.median_distance == pytest.approx(expected.median_distance, abs=1e-9)
+        assert observed.trimmed_area == pytest.approx(expected.trimmed_area, abs=1e-9)
+        assert observed.atoms_a == expected.atoms_a
+        assert observed.atoms_b == expected.atoms_b
+
+
+def test_compute_sc_batch_empty():
+    assert compute_sc_batch([]) == []
 
 
 def test_compute_sc_length_mismatch_a():

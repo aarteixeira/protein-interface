@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from protein_interface import (
@@ -29,6 +30,45 @@ from protein_interface import (
 
 DATA = Path(__file__).parent / "data"
 PDB_1ZVH = DATA / "nb_ag_test.pdb"
+PDB_1FYT = DATA / "1fyt.pdb"
+
+
+def _profile_cases():
+    return [
+        (PDB_1ZVH, ["A"], ["L"]),
+        (PDB_1FYT, ["D"], ["A"]),
+        (PDB_1FYT, ["D", "E"], ["A", "B", "C"]),
+    ]
+
+
+def _dense_contact_mask(a, b, cutoff):
+    if not a.coords or not b.coords:
+        return np.zeros((len(a.coords), len(b.coords)), dtype=bool)
+    A = np.asarray(a.coords)
+    B = np.asarray(b.coords)
+    d2 = ((A[:, None, :] - B[None, :, :]) ** 2).sum(-1)
+    return d2 <= cutoff * cutoff
+
+
+def _reference_salt_bridges(a, b, cutoff=4.0):
+    from protein_interface.interface import ANION_ATOMS, CATION_ATOMS
+    pairs = set()
+    cutoff2 = cutoff * cutoff
+    for i, ca in enumerate(a.coords):
+        a_anion = (a.residue_names[i], a.atom_names[i]) in ANION_ATOMS
+        a_cation = (a.residue_names[i], a.atom_names[i]) in CATION_ATOMS
+        if not a_anion and not a_cation:
+            continue
+        x = np.asarray(ca)
+        for j, cb in enumerate(b.coords):
+            b_anion = (b.residue_names[j], b.atom_names[j]) in ANION_ATOMS
+            b_cation = (b.residue_names[j], b.atom_names[j]) in CATION_ATOMS
+            if not ((a_anion and b_cation) or (a_cation and b_anion)):
+                continue
+            y = np.asarray(cb)
+            if float((x - y) @ (x - y)) <= cutoff2:
+                pairs.add((a.residue_ids[i], b.residue_ids[j]))
+    return len(pairs)
 
 
 def test_compute_sasa_isolated_atom_matches_sphere_area():
@@ -129,6 +169,23 @@ def test_count_salt_bridge_atom_pairs_rejects_invalid_cutoff(cutoff):
             [[0.0, 0.0, 0.0]], ["OD1"], ["ASP"],
             [[3.0, 0.0, 0.0]], ["NZ"], ["LYS"],
             cutoff,
+        )
+
+
+@pytest.mark.parametrize("cutoff", [-1.0, math.nan])
+def test_find_contact_pairs_rejects_invalid_cutoff(cutoff):
+    from protein_interface import find_contact_pairs
+    with pytest.raises(ValueError, match="cutoff"):
+        find_contact_pairs([[0.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]], cutoff)
+
+
+def test_count_salt_bridge_residue_pairs_validates_key_lengths():
+    from protein_interface import count_salt_bridge_residue_pairs
+    with pytest.raises(ValueError, match="residue_keys_a"):
+        count_salt_bridge_residue_pairs(
+            [[0.0, 0.0, 0.0]], ["OD1"], ["ASP"], [],
+            [[3.0, 0.0, 0.0]], ["NZ"], ["LYS"], ["B:1"],
+            4.0,
         )
 
 
@@ -408,6 +465,15 @@ def test_salt_bridges_excludes_non_charged():
     assert salt_bridges(a, b) == 0
 
 
+def test_salt_bridges_matches_reference_multiple_complexes():
+    from protein_interface import load_atoms, salt_bridges
+
+    for path, chains_a, chains_b in _profile_cases():
+        a = load_atoms(path, chains_a)
+        b = load_atoms(path, chains_b)
+        assert salt_bridges(a, b) == _reference_salt_bridges(a, b)
+
+
 def test_bsa_breakdown_sums_to_dsasa(nb_ag):
     from protein_interface import bsa_breakdown
     a, b = nb_ag
@@ -596,6 +662,45 @@ def test_atomic_contacts_empty():
     assert atomic_contacts(a, empty) == 0
 
 
+def test_contact_metrics_match_dense_reference_multiple_complexes():
+    from protein_interface import analyze, atomic_contacts, interface_residues, load_atoms, prodigy_ics
+    from protein_interface.interface import (
+        _combined,
+        _ic_bins_from_contacts,
+        _nis_from_arrays,
+        _prodigy_dg_from_parts,
+        _side_residue_id,
+    )
+
+    for path, chains_a, chains_b in _profile_cases():
+        a = load_atoms(path, chains_a)
+        b = load_atoms(path, chains_b)
+
+        within_5 = _dense_contact_mask(a, b, 5.0)
+        ref_int_a = {a.residue_ids[i] for i in np.flatnonzero(within_5.any(axis=1))}
+        ref_int_b = {b.residue_ids[j] for j in np.flatnonzero(within_5.any(axis=0))}
+        assert interface_residues(a, b, 5.0) == (ref_int_a, ref_int_b)
+        assert atomic_contacts(a, b, 5.0) == int(within_5.sum())
+
+        within_prodigy = _dense_contact_mask(a, b, 5.5)
+        ref_bins = _ic_bins_from_contacts(a, b, within_prodigy)
+        ref_bins["total"] = sum(ref_bins.values())
+        assert prodigy_ics(a, b) == ref_bins
+
+        combined = _combined(a, b)
+        sasa_complex = compute_sasa(
+            combined.coords, combined.atom_names, combined.residue_names, 1.4, 92
+        )
+        prodigy_interface = (
+            {_side_residue_id("a", a.residue_ids[ai]) for ai, _ in np.argwhere(within_prodigy)}
+            | {_side_residue_id("b", b.residue_ids[bi]) for _, bi in np.argwhere(within_prodigy)}
+        )
+        ref_nis = _nis_from_arrays(combined, np.asarray(sasa_complex), prodigy_interface)
+        ref_dg = _prodigy_dg_from_parts(ref_bins, ref_nis)
+        result = analyze(a, b, metrics={"prodigy_dg"}, n_points=92)
+        assert result.prodigy_dg == pytest.approx(ref_dg, abs=1e-12)
+
+
 def test_disulfide_bridges_pair():
     from protein_interface import AtomArrays, disulfide_bridges
     a = AtomArrays([[0.0, 0.0, 0.0]], ["SG"], ["CYS"], [("A", 1)])
@@ -760,6 +865,66 @@ def test_compute_sasa_batch_matches_compute_sasa(nb_ag):
     )
     assert batch[0] == serial_a
     assert batch[1] == serial_b
+
+
+def test_compute_sasa_parallel_matches_serial_multiple_complexes():
+    """Parallel SASA must preserve the serial per-atom values on bundled systems."""
+    from pathlib import Path
+    from protein_interface import AtomArrays, compute_sasa, load_atoms
+
+    data = Path(__file__).parent / "data"
+    cases = [
+        (data / "nb_ag_test.pdb", ["A"], ["L"]),
+        (data / "1fyt.pdb", ["D"], ["A"]),
+        (data / "1fyt.pdb", ["D", "E"], ["A", "B", "C"]),
+    ]
+    for path, chains_a, chains_b in cases:
+        a = load_atoms(path, chains_a)
+        b = load_atoms(path, chains_b)
+        combined = AtomArrays(
+            a.coords + b.coords,
+            a.atom_names + b.atom_names,
+            a.residue_names + b.residue_names,
+            a.residue_ids + b.residue_ids,
+        )
+        serial = compute_sasa(
+            combined.coords, combined.atom_names, combined.residue_names, 1.4, 92, False
+        )
+        parallel = compute_sasa(
+            combined.coords, combined.atom_names, combined.residue_names, 1.4, 92, True
+        )
+        assert parallel == serial
+
+
+def test_compute_sasa_batch_parallel_matches_serial_multiple_complexes():
+    """Batched parallel SASA must preserve serial per-atom arrays."""
+    from pathlib import Path
+    from protein_interface import AtomArrays, compute_sasa_batch, load_atoms
+
+    data = Path(__file__).parent / "data"
+    structures = []
+    for path, chains_a, chains_b in [
+        (data / "nb_ag_test.pdb", ["A"], ["L"]),
+        (data / "1fyt.pdb", ["D"], ["A"]),
+        (data / "1fyt.pdb", ["D", "E"], ["A", "B", "C"]),
+    ]:
+        a = load_atoms(path, chains_a)
+        b = load_atoms(path, chains_b)
+        combined = AtomArrays(
+            a.coords + b.coords,
+            a.atom_names + b.atom_names,
+            a.residue_names + b.residue_names,
+            a.residue_ids + b.residue_ids,
+        )
+        structures.extend([
+            (a.coords, a.atom_names, a.residue_names),
+            (b.coords, b.atom_names, b.residue_names),
+            (combined.coords, combined.atom_names, combined.residue_names),
+        ])
+
+    serial = compute_sasa_batch(structures, 1.4, 92, False)
+    parallel = compute_sasa_batch(structures, 1.4, 92, True)
+    assert parallel == serial
 
 
 def test_compute_sasa_batch_empty():
