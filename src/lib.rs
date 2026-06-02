@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use sc_rs::sc::atomic_radii::embedded_atomic_radii;
 use sc_rs::sc::{types::Atom, vector3::Vec3, ScCalculator};
 
+mod contacts;
 mod hbonds;
 mod salt_bridges;
 mod sasa;
@@ -293,6 +294,61 @@ fn count_salt_bridges(
     ))
 }
 
+/// Count cross-interface salt bridges as unique residue-residue pairs.
+///
+/// This preserves the public Python `salt_bridges()` definition: multiple
+/// charged atom contacts between the same residue pair count once.
+#[pyfunction]
+#[pyo3(signature = (coords_a, atom_names_a, residue_names_a, residue_keys_a, coords_b, atom_names_b, residue_names_b, residue_keys_b, cutoff=4.0))]
+fn count_salt_bridge_residue_pairs(
+    coords_a: Vec<[f64; 3]>,
+    atom_names_a: Vec<String>,
+    residue_names_a: Vec<String>,
+    residue_keys_a: Vec<String>,
+    coords_b: Vec<[f64; 3]>,
+    atom_names_b: Vec<String>,
+    residue_names_b: Vec<String>,
+    residue_keys_b: Vec<String>,
+    cutoff: f64,
+) -> PyResult<usize> {
+    let na = coords_a.len();
+    let nb = coords_b.len();
+    if atom_names_a.len() != na || residue_names_a.len() != na || residue_keys_a.len() != na {
+        return Err(PyValueError::new_err(
+            "coords_a, atom_names_a, residue_names_a, residue_keys_a must all have the same length",
+        ));
+    }
+    if atom_names_b.len() != nb || residue_names_b.len() != nb || residue_keys_b.len() != nb {
+        return Err(PyValueError::new_err(
+            "coords_b, atom_names_b, residue_names_b, residue_keys_b must all have the same length",
+        ));
+    }
+    validate_nonnegative_finite("cutoff", cutoff)?;
+    Ok(salt_bridges::count_residue_pairs(
+        &coords_a,
+        &atom_names_a,
+        &residue_names_a,
+        &residue_keys_a,
+        &coords_b,
+        &atom_names_b,
+        &residue_names_b,
+        &residue_keys_b,
+        cutoff,
+    ))
+}
+
+/// Return all cross-interface atom pairs within `cutoff`, with squared distance.
+#[pyfunction]
+#[pyo3(signature = (coords_a, coords_b, cutoff))]
+fn find_contact_pairs(
+    coords_a: Vec<[f64; 3]>,
+    coords_b: Vec<[f64; 3]>,
+    cutoff: f64,
+) -> PyResult<Vec<(usize, usize, f64)>> {
+    validate_nonnegative_finite("cutoff", cutoff)?;
+    Ok(contacts::pairs(&coords_a, &coords_b, cutoff))
+}
+
 /// Batch per-atom SASA over many atom systems in a single FFI call.
 ///
 /// Each entry in `structures` is `(coords, atom_names, residue_names)` for one
@@ -395,5 +451,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_sc_batch, m)?)?;
     m.add_function(wrap_pyfunction!(count_hbonds, m)?)?;
     m.add_function(wrap_pyfunction!(count_salt_bridges, m)?)?;
+    m.add_function(wrap_pyfunction!(count_salt_bridge_residue_pairs, m)?)?;
+    m.add_function(wrap_pyfunction!(find_contact_pairs, m)?)?;
     Ok(())
 }

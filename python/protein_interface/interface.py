@@ -47,7 +47,9 @@ from protein_interface._core import (
     compute_sasa_batch,
     compute_sc,
     compute_sc_batch,
+    count_salt_bridge_residue_pairs,
     count_hbonds,
+    find_contact_pairs,
     unknown_sasa_radius_atoms,
 )
 from protein_interface.io import _is_hydrogen, _load_structure, _select_real_atom
@@ -222,6 +224,14 @@ def _strip_side_residue_id(rid: tuple) -> tuple[str, int, str]:
         return (chain, resseq, icode)
     chain, resseq, icode = _normalize_residue_id(rid)
     return (chain, resseq, icode)
+
+
+def _residue_id_keys(atoms: AtomArrays) -> list[str]:
+    return [f"{chain}\x1f{resseq}\x1f{icode}" for chain, resseq, icode in atoms.residue_ids]
+
+
+def _contact_pairs(a: AtomArrays, b: AtomArrays, cutoff: float) -> list[tuple[int, int, float]]:
+    return find_contact_pairs(a.coords, b.coords, cutoff)
 
 
 def _validate_atom_arrays(atoms: AtomArrays, label: str, *, require_nonempty: bool) -> None:
@@ -447,25 +457,14 @@ def interface_residues(
     """Distance-based interface residue identification.
 
     A residue is at the interface if any of its heavy atoms is within `cutoff` Å
-    of any heavy atom on the other side. Uses a numpy distance matrix
-    (memory ≈ 8·N_a·N_b bytes; ~18 MB for a 1500×1500 complex).
+    of any heavy atom on the other side.
     """
     _validate_nonnegative_finite("cutoff", cutoff)
     if not a.coords or not b.coords:
         return set(), set()
-    A = np.asarray(a.coords)
-    B = np.asarray(b.coords)
-    cutoff2 = cutoff * cutoff
-    # Squared distance via ||a||² + ||b||² − 2 a·bᵀ — avoids a large 3-D
-    # intermediate and uses BLAS for the matmul.
-    sq_a = (A * A).sum(axis=1)
-    sq_b = (B * B).sum(axis=1)
-    d2 = sq_a[:, None] + sq_b[None, :] - 2.0 * (A @ B.T)
-    within = d2 <= cutoff2
-    mask_a = within.any(axis=1)
-    mask_b = within.any(axis=0)
-    int_a = {a.residue_ids[i] for i in np.flatnonzero(mask_a)}
-    int_b = {b.residue_ids[j] for j in np.flatnonzero(mask_b)}
+    pairs = _contact_pairs(a, b, cutoff)
+    int_a = {a.residue_ids[i] for i, _, _ in pairs}
+    int_b = {b.residue_ids[j] for _, j, _ in pairs}
     return int_a, int_b
 
 
@@ -530,38 +529,20 @@ def salt_bridges(a: AtomArrays, b: AtomArrays, cutoff: float = 4.0) -> int:
     interface lie within `cutoff` Å.
     """
     _validate_nonnegative_finite("cutoff", cutoff)
-    pairs: set[tuple[tuple, tuple]] = set()
-    cutoff2 = cutoff * cutoff
-    for i, ca in enumerate(a.coords):
-        a_anion = (a.residue_names[i], a.atom_names[i]) in ANION_ATOMS
-        a_cation = (a.residue_names[i], a.atom_names[i]) in CATION_ATOMS
-        if not a_anion and not a_cation:
-            continue
-        x = np.asarray(ca)
-        for j, cb in enumerate(b.coords):
-            b_anion = (b.residue_names[j], b.atom_names[j]) in ANION_ATOMS
-            b_cation = (b.residue_names[j], b.atom_names[j]) in CATION_ATOMS
-            if not ((a_anion and b_cation) or (a_cation and b_anion)):
-                continue
-            y = np.asarray(cb)
-            if float((x - y) @ (x - y)) <= cutoff2:
-                pairs.add((a.residue_ids[i], b.residue_ids[j]))
-    return len(pairs)
+    return count_salt_bridge_residue_pairs(
+        a.coords, a.atom_names, a.residue_names, _residue_id_keys(a),
+        b.coords, b.atom_names, b.residue_names, _residue_id_keys(b),
+        cutoff,
+    )
 
 
 def atomic_contacts(a: AtomArrays, b: AtomArrays, cutoff: float = 5.0) -> int:
     """Cross-interface heavy-atom pairs within `cutoff` Å.
 
     A density proxy for the interface — independent of SASA and chemistry.
-    Uses a numpy broadcast (O(N·M)); fine for typical complex sizes.
     """
     _validate_nonnegative_finite("cutoff", cutoff)
-    A = np.asarray(a.coords)
-    B = np.asarray(b.coords)
-    if A.size == 0 or B.size == 0:
-        return 0
-    d2 = ((A[:, None, :] - B[None, :, :]) ** 2).sum(-1)
-    return int((d2 <= cutoff * cutoff).sum())
+    return len(_contact_pairs(a, b, cutoff))
 
 
 def disulfide_bridges(a: AtomArrays, b: AtomArrays, cutoff: float = 2.5) -> int:
@@ -791,6 +772,27 @@ def _ic_bins_from_contacts(
     return bins
 
 
+def _ic_bins_from_contact_pairs(
+    a: AtomArrays,
+    b: AtomArrays,
+    pairs: Iterable[tuple[int, int]],
+) -> dict[str, int]:
+    res_pairs = {(a.residue_ids[ai], b.residue_ids[bi]) for ai, bi in pairs}
+    res_name_a = {a.residue_ids[i]: a.residue_names[i] for i in range(len(a.coords))}
+    res_name_b = {b.residue_ids[i]: b.residue_names[i] for i in range(len(b.coords))}
+
+    bins = {"CC": 0, "AC": 0, "AP": 0, "AA": 0, "PP": 0, "CP": 0}
+    for ra, rb in res_pairs:
+        pa = _prodigy_ic_class(res_name_a[ra])
+        pb = _prodigy_ic_class(res_name_b[rb])
+        if pa is None or pb is None:
+            continue
+        key = "".join(sorted([pa, pb]))  # AA, AC, AP, CC, CP, PP
+        if key in bins:
+            bins[key] += 1
+    return bins
+
+
 def prodigy_ics(
     a: AtomArrays,
     b: AtomArrays,
@@ -806,13 +808,8 @@ def prodigy_ics(
     _validate_nonnegative_finite("cutoff", cutoff)
     if not a.coords or not b.coords:
         return {"CC": 0, "AC": 0, "AP": 0, "AA": 0, "PP": 0, "CP": 0, "total": 0}
-    A = np.asarray(a.coords)
-    B = np.asarray(b.coords)
-    sq_a = (A * A).sum(axis=1)
-    sq_b = (B * B).sum(axis=1)
-    d2 = sq_a[:, None] + sq_b[None, :] - 2.0 * (A @ B.T)
-    within = d2 <= cutoff * cutoff
-    bins = _ic_bins_from_contacts(a, b, within)
+    pairs = ((ai, bi) for ai, bi, _ in _contact_pairs(a, b, cutoff))
+    bins = _ic_bins_from_contact_pairs(a, b, pairs)
     bins["total"] = sum(bins.values())
     return bins
 
@@ -1488,8 +1485,29 @@ def _analyze_from_sasa(
         "n_interface_a", "n_interface_b", "gly_pro_fraction",
         "charge_a", "charge_b", "charge_complementarity",
     ))
+    needs_interface_cutoff_pairs = needs_interface_residues or enabled("atomic_contacts")
+    needs_prodigy_pairs = enabled("prodigy_dg")
+    if needs_interface_cutoff_pairs or needs_prodigy_pairs:
+        contact_cutoff = max(
+            interface_cutoff if needs_interface_cutoff_pairs else 0.0,
+            PRODIGY_IC_CUTOFF if needs_prodigy_pairs else 0.0,
+        )
+        contact_pairs = _contact_pairs(a, b, contact_cutoff)
+    else:
+        contact_pairs = []
+
+    if needs_interface_cutoff_pairs:
+        interface_cutoff2 = interface_cutoff * interface_cutoff
+        interface_pairs = [
+            (ai, bi) for ai, bi, d2_contact in contact_pairs
+            if d2_contact <= interface_cutoff2
+        ]
+    else:
+        interface_pairs = []
+
     if needs_interface_residues:
-        int_a_set, int_b_set = interface_residues(a, b, interface_cutoff)
+        int_a_set = {a.residue_ids[i] for i, _ in interface_pairs}
+        int_b_set = {b.residue_ids[j] for _, j in interface_pairs}
         n_a, n_b = len(int_a_set), len(int_b_set)
     else:
         int_a_set, int_b_set = set(), set()
@@ -1529,19 +1547,12 @@ def _analyze_from_sasa(
     else:
         ssbond = None
 
-    # Atomic contact count via numpy broadcast.
-    needs_xyz = needs_sasa or enabled("atomic_contacts") or enabled("prodigy_dg")
+    # Atomic contact count.
+    needs_xyz = needs_sasa
     A_xyz = np.asarray(a.coords, dtype=float).reshape((len(a.coords), 3)) if needs_xyz else None
     B_xyz = np.asarray(b.coords, dtype=float).reshape((len(b.coords), 3)) if needs_xyz else None
-    if enabled("atomic_contacts") or enabled("prodigy_dg"):
-        if len(a.coords) == 0 or len(b.coords) == 0:
-            contact_d2 = np.zeros((len(a.coords), len(b.coords)), dtype=float)
-        else:
-            contact_d2 = ((A_xyz[:, None, :] - B_xyz[None, :, :]) ** 2).sum(-1)
-    else:
-        contact_d2 = None
     n_contacts = (
-        int((contact_d2 <= interface_cutoff * interface_cutoff).sum())
+        len(interface_pairs)
         if enabled("atomic_contacts")
         else None
     )
@@ -1610,14 +1621,17 @@ def _analyze_from_sasa(
     else:
         mean_bf = min_bf = None
 
-    # PRODIGY ΔG — reuse the contact_d² matrix (at PRODIGY's 5.5 Å cutoff) and
-    # the per-atom complex SASA. Adds ~3 ms/call.
+    # PRODIGY ΔG — reuse the spatial contact list and the per-atom complex SASA.
     if enabled("prodigy_dg"):
-        prodigy_within = contact_d2 <= PRODIGY_IC_CUTOFF * PRODIGY_IC_CUTOFF
-        prodigy_ic_bins = _ic_bins_from_contacts(a, b, prodigy_within)
+        prodigy_cutoff2 = PRODIGY_IC_CUTOFF * PRODIGY_IC_CUTOFF
+        prodigy_pairs = [
+            (ai, bi) for ai, bi, d2_contact in contact_pairs
+            if d2_contact <= prodigy_cutoff2
+        ]
+        prodigy_ic_bins = _ic_bins_from_contact_pairs(a, b, prodigy_pairs)
         prodigy_interface = (
-            {_side_residue_id("a", a.residue_ids[ai]) for ai, _ in np.argwhere(prodigy_within)}
-            | {_side_residue_id("b", b.residue_ids[bi]) for _, bi in np.argwhere(prodigy_within)}
+            {_side_residue_id("a", a.residue_ids[ai]) for ai, _ in prodigy_pairs}
+            | {_side_residue_id("b", b.residue_ids[bi]) for _, bi in prodigy_pairs}
         )
         prodigy_nis_parts = _nis_from_arrays(combined, sasa_c, prodigy_interface)
         prodigy_dg_value = _prodigy_dg_from_parts(prodigy_ic_bins, prodigy_nis_parts)

@@ -38,6 +38,13 @@ faster at `n_points=960` on bundled complexes, with high atom- and
 residue-level correlation under different radii tables. See
 [SASA Implementation and Validation](#sasa-implementation-and-validation).
 
+Contact-family metrics use Rust spatial contact enumeration instead of dense
+all-pairs distance matrices. Salt bridges are counted as unique acidic/basic
+residue pairs in Rust, matching the public Python definition. On the largest
+bundled complex, the contact summary reference dropped from 264.2 ms to 3.1 ms
+and salt-bridge counting from 137.8 ms to 5.7 ms, with identical values. See
+[Contact-Metric Implementation and Validation](#contact-metric-implementation-and-validation).
+
 ## Install
 
 From a source checkout:
@@ -182,6 +189,46 @@ Local benchmark at `n_points=960`, median of 5 timed runs:
 At the default `analyze()` screening setting, `n_points=92`, the same comparison
 gave 4.23-4.65x speedup versus FreeSASA, with total SASA ratios from 0.989 to
 1.002 and residue correlations from 0.9961 to 0.9964.
+
+## Contact-Metric Implementation and Validation
+
+The contact-family metrics use `find_contact_pairs()` in Rust to enumerate
+atom pairs within the requested cutoff. The same contact list feeds
+`atomic_contacts`, interface-residue sets, charge summaries, gly/pro fraction,
+and PRODIGY contact bins. This avoids materializing dense `N_a x N_b` distance
+matrices in the default `analyze()` path.
+
+Salt bridges use a separate Rust path that counts unique residue-residue pairs.
+This is different from the low-level atom-pair helper: multiple charged atom
+contacts between the same two residues still count as one public salt bridge.
+
+Parity is tested against dense/Python references on:
+
+| Case | Chains | Check |
+|---|---|---|
+| `tests/data/nb_ag_test.pdb` | A vs L | nanobody-antigen complex |
+| `tests/data/1fyt.pdb` | D vs A | single-chain TCR/MHC interface |
+| `tests/data/1fyt.pdb` | D:E vs A:B:C | larger multi-chain interface |
+
+Benchmark:
+
+```bash
+python benchmark/contact_metric_speed.py
+```
+
+Local benchmark after `maturin develop --release`, median timed runs. The
+reference columns use the previous dense/Python implementation style and the
+script asserts identical values before timing each case.
+
+| Case | Atoms | Dense contact summary | Spatial contact summary | Speedup | Python salt | Rust salt | Speedup | Full `analyze()` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 1858 | 24.4 ms | 1.0 ms | 23.85x | 5.6 ms | 0.9 ms | 6.52x | 95.1 ms |
+| 1FYT D:A | 3000 | 64.4 ms | 1.2 ms | 54.17x | 22.6 ms | 1.7 ms | 13.30x | 81.1 ms |
+| 1FYT D:E vs A:B:C | 6485 | 264.2 ms | 3.1 ms | 84.58x | 137.8 ms | 5.7 ms | 24.22x | 364.1 ms |
+
+The gated performance check is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
+pytest tests/test_contact_performance.py -q`; it verifies equality first, then
+requires at least a 2x speedup for both optimized paths on `1fyt` D:E vs A:B:C.
 
 ## Loading Structures
 
