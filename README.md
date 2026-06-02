@@ -11,9 +11,7 @@ The package computes:
 
 - solvent accessible surface area (SASA) and buried surface area (dSASA)
 - Lawrence-Colman shape complementarity through a vendored
-  [`sc-rs`](https://github.com/cytokineking/sc-rs) implementation with
-  spatial-index broadphase searches; the bundled larger 1FYT benchmark is about
-  2x faster than the legacy all-pairs path with identical SC output
+  [`sc-rs`](https://github.com/cytokineking/sc-rs) implementation
 - distance-based H-bonds, salt bridges, aromatic contacts, cation-pi contacts,
   disulfides, and atom contacts
 - buried unsatisfied polar atoms
@@ -24,11 +22,13 @@ The package computes:
 All metrics are derived from atom coordinates, residue names, atom names, and
 optional B-factors. This is not a force field.
 
-The SC implementation is a local, parity-tested `sc-rs` variant. It preserves
-the Lawrence-Colman result and replaces several all-pairs searches with
-deterministic spatial indexes and allocation-free broadphase probes. See
-[SC Implementation and Validation](#sc-implementation-and-validation) for
-parity cases and benchmark numbers.
+The SC implementation is a local, parity-tested `sc-rs` variant. It keeps the
+Lawrence-Colman calculation and replaces several all-pairs searches with
+deterministic spatial indexes and allocation-free broadphase probes. In local
+head-to-head tests, batched SC was 2.87-7.49x faster than the original upstream
+`sc-rs` CLI on the same normalized complexes, with a maximum observed value
+delta of `1.6e-5`. See
+[SC Implementation and Validation](#sc-implementation-and-validation).
 
 ## Install
 
