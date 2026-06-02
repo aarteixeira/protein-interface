@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "protein-interface"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "pyo3",
  "rayon",

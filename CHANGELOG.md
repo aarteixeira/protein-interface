@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.1.2] — 2026-06-02
+
 ### Added
 
 - Optional `protein_interface.openmm` module for OpenMM-backed structure
@@ -23,6 +25,22 @@
 - The OpenMM helpers keep standard amino-acid residues and exclude waters or
   non-protein residues before setup; missing heavy atoms still surface as
   OpenMM template errors.
+- Vendored, parity-tested `sc-rs` implementation with deterministic spatial
+  indexing for Lawrence-Colman shape complementarity.
+- Batched SC calculation through `compute_sc_batch()` and `analyze_batch()`.
+- Rust Shrake-Rupley SASA kernel with spatial neighbor filtering and Rayon
+  parallelism across atoms and batches.
+- Rust spatial contact enumeration for `atomic_contacts`, interface-residue
+  sets, charge summaries, gly/pro fraction, and PRODIGY contact bins.
+- Rust salt-bridge residue-pair counting that preserves the public
+  `salt_bridges()` definition.
+- Benchmarks for SC, SASA, FreeSASA comparison, and contact-family metrics.
+- Gated performance tests for SC, SASA, and contact-family optimized paths.
+
+### Fixed
+
+- `benchmark/speed.py` imports `from_boltzgen_structure` from the intended
+  internal IO module.
 
 ## [0.1.1] — 2026-05-30
 
