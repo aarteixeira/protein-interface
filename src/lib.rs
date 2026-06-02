@@ -160,14 +160,17 @@ fn compute_sc(
 ///     coords, atom_names, residue_names: parallel arrays describing the atoms
 ///     probe_radius: solvent probe radius in Å (default 1.4)
 ///     n_points: sphere points per atom (default 960; higher = more accurate, slower)
+///     parallel: parallelize independent per-atom SASA calculations with Rayon
 #[pyfunction]
-#[pyo3(signature = (coords, atom_names, residue_names, probe_radius=1.4, n_points=960))]
+#[pyo3(signature = (coords, atom_names, residue_names, probe_radius=1.4, n_points=960, parallel=true))]
 fn compute_sasa(
+    py: Python<'_>,
     coords: Vec<[f64; 3]>,
     atom_names: Vec<String>,
     residue_names: Vec<String>,
     probe_radius: f64,
     n_points: usize,
+    parallel: bool,
 ) -> PyResult<Vec<f64>> {
     let n = coords.len();
     if atom_names.len() != n || residue_names.len() != n {
@@ -179,13 +182,17 @@ fn compute_sasa(
         return Err(PyValueError::new_err("n_points must be >= 4"));
     }
     validate_nonnegative_finite("probe_radius", probe_radius)?;
-    Ok(sasa::compute(
-        &coords,
-        &atom_names,
-        &residue_names,
-        probe_radius,
-        n_points,
-    ))
+    Ok(py.allow_threads(|| {
+        sasa::compute_with_radii(
+            &coords,
+            &atom_names,
+            &residue_names,
+            probe_radius,
+            n_points,
+            &embedded_atomic_radii(),
+            parallel,
+        )
+    }))
 }
 
 /// Return atoms that have no entry in the embedded SASA/SC radius table.
@@ -292,10 +299,10 @@ fn count_salt_bridges(
 /// independent atom system (e.g. one chain, or a complex). Returns a parallel
 /// list of per-atom SASA arrays.
 ///
-/// With `parallel=True` (default) the inner loop runs across structures via
-/// Rayon and releases the GIL — single-process throughput scales with cores.
-/// When orchestrating from a `ProcessPoolExecutor` set `parallel=False` to
-/// avoid CPU oversubscription, the same convention as `compute_sc`.
+/// With `parallel=True` (default), Rayon parallelizes across structures and
+/// across atoms inside each SASA calculation while the GIL is released. When
+/// orchestrating from a `ProcessPoolExecutor`, set `parallel=False` to avoid
+/// CPU oversubscription, the same convention as `compute_sc`.
 #[pyfunction]
 #[pyo3(signature = (structures, probe_radius=1.4, n_points=960, parallel=true))]
 fn compute_sasa_batch(
@@ -323,14 +330,14 @@ fn compute_sasa_batch(
             structures
                 .par_iter()
                 .map(|(c, an, rn)| {
-                    sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table)
+                    sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table, true)
                 })
                 .collect()
         } else {
             structures
                 .iter()
                 .map(|(c, an, rn)| {
-                    sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table)
+                    sasa::compute_with_radii(c, an, rn, probe_radius, n_points, &table, false)
                 })
                 .collect()
         }

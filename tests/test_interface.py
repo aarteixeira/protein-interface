@@ -762,6 +762,66 @@ def test_compute_sasa_batch_matches_compute_sasa(nb_ag):
     assert batch[1] == serial_b
 
 
+def test_compute_sasa_parallel_matches_serial_multiple_complexes():
+    """Parallel SASA must preserve the serial per-atom values on bundled systems."""
+    from pathlib import Path
+    from protein_interface import AtomArrays, compute_sasa, load_atoms
+
+    data = Path(__file__).parent / "data"
+    cases = [
+        (data / "nb_ag_test.pdb", ["A"], ["L"]),
+        (data / "1fyt.pdb", ["D"], ["A"]),
+        (data / "1fyt.pdb", ["D", "E"], ["A", "B", "C"]),
+    ]
+    for path, chains_a, chains_b in cases:
+        a = load_atoms(path, chains_a)
+        b = load_atoms(path, chains_b)
+        combined = AtomArrays(
+            a.coords + b.coords,
+            a.atom_names + b.atom_names,
+            a.residue_names + b.residue_names,
+            a.residue_ids + b.residue_ids,
+        )
+        serial = compute_sasa(
+            combined.coords, combined.atom_names, combined.residue_names, 1.4, 92, False
+        )
+        parallel = compute_sasa(
+            combined.coords, combined.atom_names, combined.residue_names, 1.4, 92, True
+        )
+        assert parallel == serial
+
+
+def test_compute_sasa_batch_parallel_matches_serial_multiple_complexes():
+    """Batched parallel SASA must preserve serial per-atom arrays."""
+    from pathlib import Path
+    from protein_interface import AtomArrays, compute_sasa_batch, load_atoms
+
+    data = Path(__file__).parent / "data"
+    structures = []
+    for path, chains_a, chains_b in [
+        (data / "nb_ag_test.pdb", ["A"], ["L"]),
+        (data / "1fyt.pdb", ["D"], ["A"]),
+        (data / "1fyt.pdb", ["D", "E"], ["A", "B", "C"]),
+    ]:
+        a = load_atoms(path, chains_a)
+        b = load_atoms(path, chains_b)
+        combined = AtomArrays(
+            a.coords + b.coords,
+            a.atom_names + b.atom_names,
+            a.residue_names + b.residue_names,
+            a.residue_ids + b.residue_ids,
+        )
+        structures.extend([
+            (a.coords, a.atom_names, a.residue_names),
+            (b.coords, b.atom_names, b.residue_names),
+            (combined.coords, combined.atom_names, combined.residue_names),
+        ])
+
+    serial = compute_sasa_batch(structures, 1.4, 92, False)
+    parallel = compute_sasa_batch(structures, 1.4, 92, True)
+    assert parallel == serial
+
+
 def test_compute_sasa_batch_empty():
     from protein_interface import compute_sasa_batch
     assert compute_sasa_batch([], 1.4, 92, True) == []

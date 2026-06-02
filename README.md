@@ -30,6 +30,12 @@ head-to-head tests, batched SC was 2.87-7.49x faster than the original upstream
 delta of `1.6e-5`. See
 [SC Implementation and Validation](#sc-implementation-and-validation).
 
+SASA is computed by a Rust Shrake-Rupley kernel with spatial neighbor filtering
+and Rayon parallelism across atoms and batches. On the bundled mixed SASA batch,
+the optimized path was 6.94x faster than the serial compatibility path, with
+identical per-atom SASA values. See
+[SASA Implementation and Validation](#sasa-implementation-and-validation).
+
 ## Install
 
 From a source checkout:
@@ -111,6 +117,45 @@ results = analyze_batch(complexes)
 
 `analyze_batch()` batches the SASA work into one Rust call and returns one
 `InterfaceResult` per input complex.
+
+## SASA Implementation and Validation
+
+SASA uses the Shrake-Rupley algorithm with the same MS-style radii table used by
+SC. The Rust kernel builds a spatial hash over inflated atom radii, filters
+neighbors that cannot bury a surface point, and parallelizes independent
+per-atom SASA calculations with Rayon. `compute_sasa(..., parallel=True)` is the
+default. Pass `parallel=False` for serial parity or performance checks.
+
+SASA parity is tested on full per-atom arrays, not only totals:
+
+| Case | Chains | Check |
+|---|---|---|
+| `tests/data/nb_ag_test.pdb` | A vs L | nanobody-antigen complex |
+| `tests/data/1fyt.pdb` | D vs A | single-chain TCR/MHC interface |
+| `tests/data/1fyt.pdb` | D:E vs A:B:C | larger multi-chain interface |
+
+The benchmark is:
+
+```bash
+python benchmark/sasa_speed.py
+```
+
+Local benchmark on this machine after `maturin develop --release`, using
+`n_points=92` and the median of 9 timed runs:
+
+| Case | Atoms | Serial | Optimized | Speedup | Max per-atom delta |
+|---|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 1858 | 11.4 ms | 2.0 ms | 5.60x | 0.0e+00 |
+| 1FYT D:A | 3000 | 17.3 ms | 3.0 ms | 5.85x | 0.0e+00 |
+| 1FYT D:E vs A:B:C | 6485 | 39.7 ms | 7.4 ms | 5.34x | 0.0e+00 |
+
+| Batch | Structures | Serial | Optimized | Speedup | Max per-atom delta |
+|---|---:|---:|---:|---:|---:|
+| mixed x1 | 9 | 135.6 ms | 19.5 ms | 6.94x | 0.0e+00 |
+
+The gated performance check is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
+pytest tests/test_sasa_performance.py -q`; it first checks exact per-atom
+parity, then requires at least a 2x speedup on the mixed bundled batch.
 
 ## Loading Structures
 
@@ -414,6 +459,7 @@ python -m pytest -q
 The test suite includes:
 
 - unit tests for Rust SASA, H-bond, salt-bridge, and validation behavior
+- SASA parity tests across serial, per-atom parallel, and batched parallel paths
 - SC batch tests against serial `compute_sc`
 - parser and intake-path equivalence tests for PDB, mmCIF, Biopython, Biotite,
   and BoltzGen-shaped structures
@@ -429,7 +475,7 @@ Included:
 - strict input validation by default
 - PDB/mmCIF loading through Biopython
 - Rust kernels for SASA, H-bond counts, salt-bridge atom-pair counts, and SC
-- batched SASA execution through Rayon
+- per-atom and batched SASA execution through Rayon
 - optional OpenMM whole-structure relaxation, interface-restrained relaxation,
   potential energy, and MM-GBSA-style endpoint scoring
 
