@@ -33,7 +33,9 @@ delta of `1.6e-5`. See
 SASA is computed by a Rust Shrake-Rupley kernel with spatial neighbor filtering
 and Rayon parallelism across atoms and batches. On the bundled mixed SASA batch,
 the optimized path was 6.94x faster than the serial compatibility path, with
-identical per-atom SASA values. See
+identical per-atom SASA values. Against FreeSASA, the same kernel was 5.51-6.87x
+faster at `n_points=960` on bundled complexes, with high atom- and
+residue-level correlation under different radii tables. See
 [SASA Implementation and Validation](#sasa-implementation-and-validation).
 
 ## Install
@@ -156,6 +158,30 @@ Local benchmark on this machine after `maturin develop --release`, using
 The gated performance check is `PROTEIN_INTERFACE_PERF=1 .venv/bin/python -m
 pytest tests/test_sasa_performance.py -q`; it first checks exact per-atom
 parity, then requires at least a 2x speedup on the mixed bundled batch.
+
+FreeSASA comparison uses the same selected heavy atoms and times calculation
+only on prebuilt structures:
+
+```bash
+python benchmark/sasa_vs_freesasa.py
+```
+
+These values are not expected to be identical. This package uses the same
+MS-style radii table as the SC calculation; FreeSASA uses its default
+classifier/radii. The useful checks are total SASA ratio, atom-level
+correlation, residue-level correlation, and residue-level absolute difference.
+
+Local benchmark at `n_points=960`, median of 5 timed runs:
+
+| Case | Atoms | Ours | FreeSASA | Speedup vs FreeSASA | Total ratio | Atom r | Residue r | Residue MAD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| nb_ag_test A:L | 1858 | 9.6 ms | 53.0 ms | 5.51x | 0.997 | 0.9922 | 0.9990 | 1.29 Å² |
+| 1FYT D:A | 3000 | 13.9 ms | 82.0 ms | 5.90x | 0.997 | 0.9918 | 0.9990 | 1.85 Å² |
+| 1FYT D:E vs A:B:C | 6485 | 25.9 ms | 178.1 ms | 6.87x | 0.988 | 0.9920 | 0.9989 | 1.70 Å² |
+
+At the default `analyze()` screening setting, `n_points=92`, the same comparison
+gave 4.23-4.65x speedup versus FreeSASA, with total SASA ratios from 0.989 to
+1.002 and residue correlations from 0.9961 to 0.9964.
 
 ## Loading Structures
 
