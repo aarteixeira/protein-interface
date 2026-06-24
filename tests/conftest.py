@@ -10,6 +10,8 @@ _FIXTURES = {
     "1fyt.pdb": "https://files.rcsb.org/download/1FYT.pdb",
     # 1ZVH: anti-lysozyme nanobody (chain A) vs lysozyme (chain L)
     "nb_ag_test.pdb": "https://files.rcsb.org/download/1ZVH.pdb",
+    # 1ITB: IL-1beta (chain A) vs type-1 IL-1 receptor ectodomain (chain B)
+    "1itb.pdb": "https://files.rcsb.org/download/1ITB.pdb",
 }
 
 

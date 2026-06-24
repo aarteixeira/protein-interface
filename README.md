@@ -18,6 +18,8 @@ The package computes:
 - per-side burial, backbone/side-chain burial, hydrophobic/polar/charged burial,
   interface charge summaries, interface shape descriptors, B-factor or pLDDT
   summaries, buried-area hotspots, and a PRODIGY-style empirical dG estimate
+- per-residue interface / near-interface / core / non-interface classification,
+  exported to Excel and an optional 3Dmol.js HTML viewer
 
 All metrics are derived from atom coordinates, residue names, atom names, and
 optional B-factors. This is not a force field.
@@ -401,6 +403,80 @@ PRODIGY pass and buried-unsat scan, while `analyze(a, b, metrics={"hbonds"})`
 does not run SASA or SC at all. Unknown metric names raise `ValueError`.
 Disabled fields are returned as `None`.
 
+## Per-Residue Interface Classification
+
+`classify_residues()` labels every residue of a complex as `interface`,
+`near_interface`, `core`, or `non_interface`, and writes an Excel table plus an
+optional 3Dmol.js HTML viewer. Install the extra (scipy + pandas + openpyxl):
+
+```bash
+python -m pip install "protein-interface[residues]"
+```
+
+```python
+from protein_interface import classify_residues
+
+result = classify_residues("1itb.pdb")      # strict preset, near-interface off (defaults)
+result.to_excel("1itb.residues.xlsx")       # one row per residue + per-chain summary sheet
+result.to_html("1itb.residues.html")        # cartoon, coloured by category
+print(result.counts()["ALL"])
+
+# lenient preset, and turn the geodesic near-interface category on
+lenient = classify_residues("1itb.pdb", mode="lenient", near_interface=True)
+```
+
+Command line (`protein-interface-residues`, or `python -m
+protein_interface.residue_classifier`):
+
+```bash
+protein-interface-residues 1itb.pdb --html                        # strict preset
+protein-interface-residues 1itb.pdb --mode lenient --near-interface --html
+protein-interface-residues fab_antigen.pdb -g H,L -g A --html     # H+L as one partner
+```
+
+Each residue gets exactly one label (precedence interface > near_interface >
+core > non_interface):
+
+| Category | Definition |
+|---|---|
+| `interface` | per-residue `dSASA > dsasa_threshold` Å² (monomer vs complex) **or** any heavy atom within `contact_cutoff` Å of another group. Thresholds come from `mode` (override individually); `combine="and"` requires both |
+| `near_interface` | **opt-in (`near_interface=True`; off by default)** — not interface; a side-chain heavy atom within `near_cutoff` Å (atom-graph geodesic, **same chain**) of an interface residue's side chain (Gly → CA) |
+| `core` | not interface/near; monomer relative SASA `< core_rsasa` (residue SASA in the isolated chain ÷ Tien et al. 2013 reference) |
+| `non_interface` | everything else (exposed surface) |
+
+Two named interface presets via `mode` (default `"strict"`):
+
+| `mode` | interface criterion |
+|---|---|
+| `strict` (default) | `dSASA > 3 Å²` **or** ≤ 5 Å contact |
+| `lenient` | `dSASA > 0 Å²` **or** ≤ 7 Å contact |
+
+`dsasa_threshold` / `contact_cutoff` / `combine` override the preset when passed.
+
+A *group* is a set of chains treated as one binding partner (the "monomer").
+By default each chain is its own group, so `dSASA = SASA(chain alone) − SASA(chain
+in the complex)` and contact is to any other chain. Pass
+`groups=[["H", "L"], ["A"]]` to keep a multi-chain partner together. Use
+`chains=["B", "C"]` (CLI `--chains B,C`) to restrict the analysis to a subset of
+chains, ignoring the rest of the assembly.
+
+Defaults, all customizable: `mode="strict"` (`dsasa_threshold=3.0` Å²,
+`contact_cutoff=5.0` Å, `combine="or"`), `near_interface=False`, `near_cutoff=4.0` Å,
+`core_rsasa=0.25`, `edge_cutoff=near_cutoff`, `n_points=960`. The near-interface
+geodesic (when enabled) is an exact shortest path over a
+graph of the chain's heavy atoms (edges between atoms within `edge_cutoff` Å),
+via scipy — it routes through the molecule, not across solvent. At the default
+`near_cutoff == edge_cutoff == 4 Å` it closely matches a 4 Å Euclidean rule;
+lower `edge_cutoff` or raise `near_cutoff` to make the geodesic behaviour more
+pronounced.
+
+Output columns: `group, chain, resseq, icode, resname, category, dsasa,
+min_interchain_dist, geodesic_to_interface, monomer_rsasa, complex_rsasa`
+(`geodesic_to_interface` is the same-chain graph-geodesic distance in Å to the
+nearest interface side chain — the value the `near_cutoff` is applied to). The HTML embeds the
+structure and loads 3Dmol.js from a CDN (network is needed for the library
+only, not the structure).
+
 ## Optional OpenMM Helpers
 
 `protein_interface.openmm` provides optional force-field calculations. The base
@@ -545,6 +621,8 @@ The test suite includes:
 Included:
 
 - coordinate-derived interface descriptors
+- per-residue interface / near-interface / core classification with Excel and
+  3Dmol HTML output
 - strict input validation by default
 - PDB/mmCIF loading through Biopython
 - Rust kernels for SASA, H-bond counts, salt-bridge atom-pair counts, and SC

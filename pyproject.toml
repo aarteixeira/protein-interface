@@ -12,6 +12,13 @@ description = "Fast, geometry-based interface analysis for protein-protein compl
 
 [project.optional-dependencies]
 openmm = ["openmm>=8"]
+# Per-residue interface classification (classify_residues): scipy for the
+# atom-graph geodesic, pandas + openpyxl for Excel output. The 3Dmol HTML
+# viewer needs no extra Python dependency.
+residues = ["scipy>=1.10", "pandas>=2.0", "openpyxl>=3.1"]
+
+[project.scripts]
+protein-interface-residues = "protein_interface.residue_classifier:main"
 
 [tool.maturin]
 features = ["pyo3/extension-module", "pyo3/abi3-py310"]
