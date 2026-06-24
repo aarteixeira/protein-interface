@@ -19,6 +19,9 @@ tests/data/*.cif
 # ...but keep committed fixtures (e.g. a real BoltzGen refold_cif that can't be auto-fetched).
 !tests/data/boltzgen_refold_*.cif
 
+# Generated analysis outputs
+results/
+
 # IDE / OS
 .vscode/
 .idea/

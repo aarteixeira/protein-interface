@@ -48,6 +48,14 @@ from protein_interface.interface import (
     salt_bridges,
     sasa,
 )
+from protein_interface.residue_classifier import (
+    CATEGORIES,
+    DEFAULT_COLORS,
+    MODES,
+    ResidueClassification,
+    ResidueRecord,
+    classify_residues,
+)
 from protein_interface.io import (
     from_biotite,
     from_boltzgen_refold,
@@ -106,4 +114,10 @@ __all__ = [
     "REFERENCE_SASA",
     "analyze",
     "analyze_batch",
+    "classify_residues",
+    "ResidueClassification",
+    "ResidueRecord",
+    "CATEGORIES",
+    "DEFAULT_COLORS",
+    "MODES",
 ]
