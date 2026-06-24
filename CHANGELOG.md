@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## [0.1.3] — 2026-06-24
+
+### Added
+
+- `classify_residues()`: per-residue interface classification for a complex.
+  Every residue is labelled `interface`, `near_interface`, `core`, or
+  `non_interface`, written to an Excel table and an optional 3Dmol.js HTML
+  viewer, with a `protein-interface-residues` CLI.
+  - `interface` = per-residue dSASA (monomer vs complex) and/or inter-chain
+    heavy-atom contact, merged by `combine` (`"or"` default / `"and"`). `mode`
+    presets: `strict` (dSASA > 3 Å² or ≤ 5 Å) and `lenient` (dSASA > 0 or ≤ 7 Å).
+  - `near_interface` (opt-in, off by default): exact atom-graph geodesic (scipy)
+    from interface side chains, same chain, Gly → CA fallback.
+  - `core`: monomer relative SASA below `core_rsasa` (Tien 2013 reference).
+  - `chains` subset and multi-chain `groups` (binding partners).
+  - per-residue columns: dSASA, min inter-chain distance, geodesic-to-interface,
+    monomer/complex relative SASA, and a gap-aware per-chain `seq_index`
+    numbering alongside the author/PDB `resseq`.
+- `residues` optional dependency extra (scipy, pandas, openpyxl). The 3Dmol HTML
+  viewer needs no extra Python dependency.
+
 ## [0.1.2] — 2026-06-02
 
 ### Added
