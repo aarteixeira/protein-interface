@@ -50,7 +50,9 @@ core:
     ``core_rsasa``. Captures intrinsic burial independent of the partner.
     Non-standard residues (no reference) are never labelled core.
 
-Outputs: a tidy table (one row per residue) writable to Excel, and an optional
+Outputs: a tidy table (one row per residue) writable to Excel — with two residue
+numberings, ``resseq`` (author/PDB number, as in the structure) and ``seq_index``
+(per-chain sequential index from 1 that counts structure gaps) — plus an optional
 3Dmol.js HTML viewer (structure embedded, library from CDN) coloured by category.
 """
 from __future__ import annotations
@@ -97,8 +99,9 @@ ResidueId = tuple[str, int, str]  # (chain, resseq, icode)
 class ResidueRecord:
     group: str                  # group label this residue's chain belongs to
     chain: str
-    resseq: int
+    resseq: int                 # author/PDB residue number (as in the structure)
     icode: str
+    seq_index: int              # per-chain sequential index from 1, counting structure gaps
     resname: str
     category: str               # one of CATEGORIES
     dsasa: float                # Å², monomer(group) − complex, summed over residue
@@ -128,6 +131,7 @@ class ResidueClassification:
                     "chain": r.chain,
                     "resseq": r.resseq,
                     "icode": r.icode,
+                    "seq_index": r.seq_index,
                     "resname": r.resname,
                     "category": r.category,
                     "dsasa": r.dsasa,
@@ -387,6 +391,27 @@ def classify_residues(
             res_order.append(rid)
         res_atoms[rid].append(i)
 
+    # Per-chain sequential index from 1, counting structure gaps. Walk residues
+    # in (resseq, icode) order: a jump in the author numbering (e.g. 50 -> 53)
+    # adds the missing residues to the count; an insertion code (same resseq,
+    # next icode) advances by one. The first observed residue of each chain is 1.
+    res_seq_index: dict[ResidueId, int] = {}
+    for chain in present_chains:
+        chain_rids = sorted(
+            (rid for rid in res_order if rid[0] == chain), key=lambda r: (r[1], r[2])
+        )
+        prev: ResidueId | None = None
+        n = 0
+        for rid in chain_rids:
+            if prev is None:
+                n = 1
+            elif rid[1] == prev[1]:
+                n += 1  # insertion code (same author number)
+            else:
+                n += max(1, rid[1] - prev[1])  # gap-aware; >=1 guards non-increasing numbering
+            res_seq_index[rid] = n
+            prev = rid
+
     # Per-residue aggregates.
     res_dsasa: dict[ResidueId, float] = {}
     res_min_other: dict[ResidueId, float] = {}
@@ -474,6 +499,7 @@ def classify_residues(
                 chain=chain,
                 resseq=resseq,
                 icode=icode,
+                seq_index=res_seq_index[rid],
                 resname=res_name[rid],
                 category=cat,
                 dsasa=round(res_dsasa[rid], 3),

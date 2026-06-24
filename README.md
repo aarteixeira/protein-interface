@@ -470,10 +470,14 @@ via scipy — it routes through the molecule, not across solvent. At the default
 lower `edge_cutoff` or raise `near_cutoff` to make the geodesic behaviour more
 pronounced.
 
-Output columns: `group, chain, resseq, icode, resname, category, dsasa,
-min_interchain_dist, geodesic_to_interface, monomer_rsasa, complex_rsasa`
-(`geodesic_to_interface` is the same-chain graph-geodesic distance in Å to the
-nearest interface side chain — the value the `near_cutoff` is applied to). The HTML embeds the
+Output columns: `group, chain, resseq, icode, seq_index, resname, category,
+dsasa, min_interchain_dist, geodesic_to_interface, monomer_rsasa, complex_rsasa`.
+Two residue numberings are given: `resseq` is the author/PDB number as it appears
+in the structure, and `seq_index` is a per-chain sequential index starting at 1
+that **counts structure gaps** (a jump in author numbering, e.g. missing
+residues, advances the index by that many positions; insertion codes advance by
+one). `geodesic_to_interface` is the same-chain graph-geodesic distance in Å to
+the nearest interface side chain — the value `near_cutoff` is applied to. The HTML embeds the
 structure and loads 3Dmol.js from a CDN (network is needed for the library
 only, not the structure).
 

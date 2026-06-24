@@ -215,13 +215,42 @@ def test_invalid_chain_raises():
         classify_residues(PDB, n_points=N_POINTS, chains=["Z"])
 
 
+def test_seq_index_starts_at_one_and_is_monotonic(result):
+    by_chain: dict[str, list] = {}
+    for r in result.records:
+        by_chain.setdefault(r.chain, []).append(r)
+    for recs in by_chain.values():
+        recs.sort(key=lambda r: (r.resseq, r.icode))
+        assert recs[0].seq_index == 1
+        idx = [r.seq_index for r in recs]
+        assert all(b > a for a, b in zip(idx, idx[1:]))  # strictly increasing
+
+
+def test_seq_index_counts_gaps_and_insertions(tmp_path):
+    pdb = _write_ala_pdb(
+        tmp_path / "synth.pdb",
+        [
+            ("A", 5, ""), ("A", 6, ""), ("A", 9, ""),      # 7 and 8 missing (gap of 2)
+            ("B", 10, ""), ("B", 10, "A"), ("B", 11, ""),  # 10A is an insertion
+        ],
+    )
+    res = classify_residues(pdb, n_points=12)
+    si = {(r.chain, r.resseq, r.icode): r.seq_index for r in res.records}
+    assert si[("A", 5, "")] == 1
+    assert si[("A", 6, "")] == 2
+    assert si[("A", 9, "")] == 5     # the 2 missing residues are counted
+    assert si[("B", 10, "")] == 1    # numbering resets per chain
+    assert si[("B", 10, "A")] == 2   # insertion code advances by one
+    assert si[("B", 11, "")] == 3
+
+
 def test_excel_output(result, tmp_path):
     pd = pytest.importorskip("pandas")
     out = result.to_excel(tmp_path / "out.xlsx")
     assert out.exists()
     df = pd.read_excel(out, sheet_name="residues")
     assert list(df.columns) == [
-        "group", "chain", "resseq", "icode", "resname", "category", "dsasa",
+        "group", "chain", "resseq", "icode", "seq_index", "resname", "category", "dsasa",
         "min_interchain_dist", "geodesic_to_interface", "monomer_rsasa", "complex_rsasa",
     ]
     assert len(df) == len(result.records)
@@ -238,7 +267,30 @@ def test_html_output(result, tmp_path):
         assert color in html
 
 
-# ── helper ────────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _write_ala_pdb(path: Path, residues: list[tuple[str, int, str]]) -> Path:
+    """Write a minimal PDB of ALA residues (N, CA, C, O, CB) at the given
+    (chain, resseq, icode) positions, with strict PDB column alignment."""
+    atoms = [("N", "N"), ("CA", "C"), ("C", "C"), ("O", "O"), ("CB", "C")]
+    offs = [(0.0, 0.0), (1.5, 0.0), (3.0, 0.0), (3.0, 1.2), (1.5, 1.5)]
+    lines: list[str] = []
+    serial = 1
+    for k, (chain, resseq, icode) in enumerate(residues):
+        cx = 8.0 * k
+        cy = 0.0 if chain == "A" else 50.0
+        ic = icode if icode else " "
+        for (name, elem), (dx, dy) in zip(atoms, offs):
+            x, y, z = cx + dx, cy + dy, 0.0
+            lines.append(
+                f"ATOM  {serial:>5} {name:<4} ALA {chain:1}{resseq:>4}{ic:1}   "
+                f"{x:>8.3f}{y:>8.3f}{z:>8.3f}{1.0:>6.2f}{0.0:>6.2f}          {elem:>2}"
+            )
+            serial += 1
+    lines.append("END")
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
 
 def _load_sidechain_atoms(pdb: Path) -> dict[tuple, list[list[float]]]:
     """Side-chain heavy-atom coords per residue id, using the exact same atoms
