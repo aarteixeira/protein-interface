@@ -22,6 +22,12 @@ conda-forge OpenMM solves can pull CUDA 12.9 runtime components that the driver
 cannot JIT. If your driver supports a newer CUDA runtime, update the
 `cuda-version` pin deliberately and verify `platform="CUDA"` before long jobs.
 
+On **NVIDIA Blackwell** (RTX PRO 6000 / `sm_120`, driver 595 / CUDA 13.2) use
+`environment-blackwell.yml`, which pins `openmm=8.5.2` against a CUDA 12.9 NVRTC:
+the 12.4 default cannot compile `compute_120` kernels, and `cuda-version=13.x`
+(NVRTC 13.3) emits PTX the 13.2 driver rejects. Keep NVRTC `<=` the driver's
+CUDA version.
+
 ## Helpers
 
 | Function | Purpose |

@@ -95,6 +95,22 @@ cannot JIT. If your driver supports a newer CUDA runtime, update the
 `cuda-version` pin deliberately and verify `platform="CUDA"` before running
 long sampled-GBSA jobs.
 
+On **NVIDIA Blackwell** cards (RTX PRO 6000 / `sm_120`, driver 595 / CUDA 13.2),
+that default `cuda-version=12.4` toolkit predates `sm_120`, so its NVRTC cannot
+compile `compute_120` kernels and `platform="CUDA"` fails to load. Use
+[`environment-blackwell.yml`](environment-blackwell.yml) instead, which pins
+`openmm=8.5.2` against a CUDA **12.9** NVRTC — new enough to know `sm_120`, old
+enough to emit PTX the 13.2 driver accepts:
+
+```bash
+mamba env create -f environment-blackwell.yml
+mamba activate protein-interface-blackwell
+```
+
+Do not push to `cuda-version=13.x` on a 13.2 driver: NVRTC 13.3 re-triggers
+`CUDA_ERROR_UNSUPPORTED_PTX_VERSION`. Keep the NVRTC CUDA version at or below the
+driver's CUDA version (the `nvidia-smi` header).
+
 ## Quick Start
 
 ```python

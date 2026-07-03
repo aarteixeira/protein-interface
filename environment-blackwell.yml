@@ -1,0 +1,38 @@
+# NVIDIA Blackwell (RTX PRO 6000 / compute capability sm_120) GPU environment.
+#
+# Use this INSTEAD of environment-gpu.yml on Blackwell cards — e.g. gnode2's
+# RTX PRO 6000, driver 595 / CUDA 13.2.
+#
+# Why a separate file: environment-gpu.yml pins cuda-version=12.4 + openmm<8.3 to
+# dodge CUDA_ERROR_UNSUPPORTED_PTX_VERSION on OLD 550-series drivers. That toolkit
+# predates sm_120, so its NVRTC cannot compile compute_120 kernels and OpenMM's
+# CUDA platform fails to load on Blackwell.
+#
+# The pins below are the Blackwell sweet spot:
+#   * openmm 8.5.2 built against CUDA 12.9 NVRTC -> knows sm_120 (Blackwell support
+#     landed in CUDA 12.8) AND emits PTX the 13.2 driver's JIT accepts.
+#   * Do NOT bump to cuda-version=13.x here: on the 595/13.2 driver, nvrtc 13.3
+#     emits PTX newer than the driver accepts -> CUDA_ERROR_UNSUPPORTED_PTX_VERSION
+#     all over again. Keep NVRTC <= the driver's CUDA version.
+#   * rust is required (unlike environment-gpu.yml) because maturin needs a Rust
+#     toolchain to build the protein_interface._core extension and Blackwell hosts
+#     may not ship a system rustc.
+#
+# Validated on gnode2 (2026-07-03): platform="CUDA" relax + single-structure GBSA
+# reproduce the gnode1 reference (-183.7 vs -183.6 kJ/mol on 1fyt A|C); full suite
+# 165 passed / 19 skipped; release-build Rust perf thresholds met.
+name: protein-interface-blackwell
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy>=1.24
+  - biopython>=1.83
+  - openmm=8.5.2
+  - cuda-version=12.9
+  - rust>=1.75
+  - pip
+  - maturin>=1.5
+  - pytest
+  - pip:
+      - -e .
