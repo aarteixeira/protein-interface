@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "protein-interface"
 version = "0.1.3"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "biopython>=1.83"]
+dependencies = ["numpy>=1.24", "biopython>=1.83", "gemmi>=0.6"]
 license = {text = "MIT"}
 description = "Fast, geometry-based interface analysis for protein-protein complexes (SASA, dSASA, H-bonds, salt bridges, π-π, cation-π, buried unsats, shape complementarity, and more)"
 

@@ -71,7 +71,7 @@ from protein_interface.interface import (
     _validate_nonnegative_finite,
     load_atoms,
 )
-from protein_interface.io import _load_structure
+from protein_interface.io import _load_gemmi
 
 CATEGORIES = ("interface", "near_interface", "core", "non_interface")
 
@@ -302,11 +302,10 @@ def classify_residues(
     structure_path = Path(structure_path)
 
     # All chains that carry ≥1 heavy ATOM record.
-    structure = _load_structure(structure_path)
-    models = list(structure.get_models())
-    if model >= len(models):
-        raise ValueError(f"model index {model} out of range ({len(models)} model(s))")
-    all_struct_chains = [ch.id for ch in models[model].get_chains()]
+    structure = _load_gemmi(structure_path)
+    if model >= len(structure):
+        raise ValueError(f"model index {model} out of range ({len(structure)} model(s))")
+    all_struct_chains = [ch.name for ch in structure[model]]
     if chains is None:
         load_chains = all_struct_chains
     else:
@@ -318,7 +317,8 @@ def classify_residues(
                 f"Available: {all_struct_chains}"
             )
     atoms: AtomArrays = load_atoms(
-        structure_path, chains=load_chains, model=model, include_hetatm=include_hetatm
+        structure_path, chains=load_chains, model=model,
+        include_hetatm=include_hetatm, structure=structure,
     )
     if not atoms.coords:
         raise ValueError("no heavy atoms loaded from structure")

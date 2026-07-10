@@ -52,7 +52,7 @@ from protein_interface._core import (
     find_contact_pairs,
     unknown_sasa_radius_atoms,
 )
-from protein_interface.io import _is_hydrogen, _load_structure, _select_real_atom
+from protein_interface.io import _gemmi_atom_arrays, _load_gemmi
 
 AROMATIC = frozenset({"PHE", "TYR", "TRP", "HIS"})
 
@@ -364,41 +364,17 @@ def load_atoms(
     model: int = 0,
     include_hetatm: bool = False,
     include_hydrogens: bool = False,
+    structure=None,
 ) -> AtomArrays:
-    """Extract atom arrays (including per-atom residue IDs) from a PDB/CIF file."""
-    structure = _load_structure(pdb_path)
-    models = list(structure.get_models())
-    if model >= len(models):
-        raise ValueError(f"model index {model} out of range ({len(models)} model(s))")
-    m = models[model]
+    """Extract atom arrays (including per-atom residue IDs) from a PDB/CIF file.
 
-    coords: list[list[float]] = []
-    atom_names: list[str] = []
-    res_names: list[str] = []
-    res_ids: list[tuple[str, int, str]] = []
-    bfactors: list[float] = []
-    chains_set = set(chains)
-    for chain in m.get_chains():
-        if chain.id not in chains_set:
-            continue
-        for residue in chain.get_residues():
-            if not include_hetatm and residue.id[0] != " ":
-                continue
-            rid = (chain.id, residue.id[1], residue.id[2].strip())
-            for disordered_or_atom in residue.get_atoms():
-                real = _select_real_atom(disordered_or_atom)
-                if real is None:
-                    continue
-                name = real.name.strip()
-                elem = (real.element or "").strip()
-                if not include_hydrogens and _is_hydrogen(name, elem):
-                    continue
-                c = real.coord
-                coords.append([float(c[0]), float(c[1]), float(c[2])])
-                atom_names.append(name)
-                res_names.append(residue.resname.strip())
-                res_ids.append(rid)
-                bfactors.append(float(real.bfactor) if real.bfactor is not None else 0.0)
+    Pass an already-parsed gemmi ``structure`` to skip re-parsing ``pdb_path``.
+    """
+    if structure is None:
+        structure = _load_gemmi(pdb_path)
+    coords, atom_names, res_names, res_ids, bfactors = _gemmi_atom_arrays(
+        structure, chains, model, include_hetatm, include_hydrogens
+    )
     return AtomArrays(coords, atom_names, res_names, res_ids, bfactors)
 
 

@@ -107,6 +107,79 @@ def _load_structure(path: str | Path):
     return parser.get_structure(path.stem, str(path))
 
 
+# ── gemmi fast parser ────────────────────────────────────────────────────────
+#
+# gemmi's C++ parser is ~13× faster than biopython's pure-Python PDBParser and
+# reads PDB and mmCIF alike. It is the parse path for load_atoms() and from_pdb().
+# _load_structure() (biopython) is kept for from_structure()'s in-memory API and
+# for tests that hand around a Bio.PDB structure.
+
+# gemmi reports "no alternate location" as the null char; "A" is the primary
+# conformer. Keeping these two mirrors biopython's _select_real_atom (' '/'A').
+_GEMMI_KEEP_ALTLOC = ("\x00", "", " ", "A")
+
+
+def _load_gemmi(path: str | Path):
+    """Parse a PDB/mmCIF file with gemmi. Chain IDs follow author naming
+    (auth_asym_id for mmCIF), matching biopython and the sc-rs CLI."""
+    import gemmi
+
+    return gemmi.read_structure(str(path))
+
+
+def _gemmi_atom_arrays(
+    structure,
+    chains: list[str],
+    model: int,
+    include_hetatm: bool,
+    include_hydrogens: bool,
+) -> tuple[list[list[float]], list[str], list[str], list[tuple[str, int, str]], list[float]]:
+    """Extract parallel atom arrays from a gemmi Structure.
+
+    Mirrors the biopython extraction (``_extract_atom_arrays`` / ``load_atoms``)
+    exactly: ATOM records only unless ``include_hetatm``, altloc ``''``/``'A'``
+    only, hydrogens excluded by default. Coordinates are rounded to float32 to
+    match biopython's numpy storage, so the Rust kernels receive identical inputs
+    from either parser (parity holds bit-for-bit, not just within tolerance).
+
+    Returns ``(coords, atom_names, res_names, res_ids, bfactors)``.
+    """
+    if model < 0 or model >= len(structure):
+        raise ValueError(f"model index {model} out of range ({len(structure)} model(s))")
+    m = structure[model]
+    chains_set = set(chains)
+
+    coords: list[list[float]] = []
+    atom_names: list[str] = []
+    res_names: list[str] = []
+    res_ids: list[tuple[str, int, str]] = []
+    bfactors: list[float] = []
+    for chain in m:
+        if chain.name not in chains_set:
+            continue
+        for residue in chain:
+            if not include_hetatm and residue.het_flag != "A":
+                continue
+            res_name = residue.name.strip()
+            rid = (chain.name, residue.seqid.num, (residue.seqid.icode or "").strip())
+            for atom in residue:
+                if atom.altloc not in _GEMMI_KEEP_ALTLOC:
+                    continue
+                name = atom.name.strip()
+                if not include_hydrogens and _is_hydrogen(name, atom.element.name.strip()):
+                    continue
+                p = atom.pos
+                coords.append([p.x, p.y, p.z])
+                atom_names.append(name)
+                res_names.append(res_name)
+                res_ids.append(rid)
+                bfactors.append(float(atom.b_iso))
+
+    if coords:
+        coords = np.asarray(coords, dtype=np.float32).astype(np.float64).tolist()
+    return coords, atom_names, res_names, res_ids, bfactors
+
+
 def _validate_sc_arrays(coords, atom_names, residue_names, label: str, strict: bool) -> None:
     n = len(coords)
     if strict and n == 0:
@@ -189,17 +262,24 @@ def from_pdb(
         include_hydrogens:  include hydrogen atoms (default False)
         parallel:           enable Rayon parallelism inside sc-rs
     """
-    structure = _load_structure(pdb_path)
-    return from_structure(
-        structure,
-        chains_a,
-        chains_b,
-        model=model,
-        include_hetatm=include_hetatm,
-        include_hydrogens=include_hydrogens,
-        parallel=parallel,
-        strict=strict,
+    structure = _load_gemmi(pdb_path)
+    if model >= len(structure):
+        raise ValueError(
+            f"model index {model} out of range (structure has {len(structure)} model(s))"
+        )
+    if chains_b is None:
+        all_chain_ids = list(dict.fromkeys(ch.name for ch in structure[model]))
+        chains_b = [c for c in all_chain_ids if c not in set(chains_a)]
+
+    coords_a, names_a, res_a, _, _ = _gemmi_atom_arrays(
+        structure, chains_a, model, include_hetatm, include_hydrogens
     )
+    coords_b, names_b, res_b, _, _ = _gemmi_atom_arrays(
+        structure, chains_b, model, include_hetatm, include_hydrogens
+    )
+    _validate_sc_arrays(coords_a, names_a, res_a, "chains_a", strict)
+    _validate_sc_arrays(coords_b, names_b, res_b, "chains_b", strict)
+    return compute_sc(coords_a, names_a, res_a, coords_b, names_b, res_b, parallel)
 
 
 # ── BoltzGen integration ─────────────────────────────────────────────────────
