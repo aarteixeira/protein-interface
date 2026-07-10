@@ -65,8 +65,9 @@ python -m pip install maturin
 maturin develop --release
 ```
 
-The runtime Python dependencies declared in `pyproject.toml` are `numpy` and
-`biopython`. Optional dependencies:
+The runtime Python dependencies declared in `pyproject.toml` are `numpy`,
+`gemmi` (fast PDB/mmCIF parsing), and `biopython` (`from_structure()` intake).
+Optional dependencies:
 
 - `freesasa` for SASA comparison tests
 - `prodigy_prot` for optional upstream PRODIGY comparison tests
@@ -628,7 +629,7 @@ Included:
 - per-residue interface / near-interface / core classification with Excel and
   3Dmol HTML output
 - strict input validation by default
-- PDB/mmCIF loading through Biopython
+- PDB/mmCIF loading through gemmi (Biopython for the `from_structure()` intake)
 - Rust kernels for SASA, H-bond counts, salt-bridge atom-pair counts, and SC
 - per-atom and batched SASA execution through Rayon
 - optional OpenMM whole-structure relaxation, interface-restrained relaxation,

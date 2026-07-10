@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- Structure parsing for `load_atoms()`, `classify_residues()`, and `from_pdb()`
+  now uses the gemmi C++ parser instead of biopython (~20× faster parse; ~12×
+  faster `classify_residues` end to end). Output is float32-rounded to match the
+  previous biopython path bit-for-bit, so SC/SASA/interface results are
+  unchanged. `from_structure()` still accepts an in-memory biopython `Structure`.
+  `gemmi` is now a core dependency.
+- `classify_residues()` no longer parses the input structure twice (once to list
+  chains, once to load atoms).
+
 ## [0.1.3] — 2026-06-24
 
 ### Added
