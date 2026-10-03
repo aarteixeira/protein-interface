@@ -36,3 +36,8 @@ jobs:
       - name: Run tests
         # parity tests skip automatically when `sc` binary is not in PATH
         run: .venv/bin/pytest tests/ -v
+
+      - name: Run Rust geometry and spatial tests
+        env:
+          PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
+        run: cargo test --locked

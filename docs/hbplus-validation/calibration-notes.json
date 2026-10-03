@@ -1,0 +1,35 @@
+{
+  "method": "Independent calculation from published coordinates and saved observations; no HBPLUS execution or C-source translation",
+  "split": "first 32 sorted PDB identifiers in pinned hbonds.parquet",
+  "backbone_rotation": {
+    "reference_observations": 382,
+    "metric": "median absolute D-H-A angle difference in degrees",
+    "rotation_toward_CA_degrees_to_median_error": {
+      "-4": 5.847295799672651,
+      "-2": 4.214599061622877,
+      "-1": 3.6212348916252353,
+      "0": 2.911095195565224,
+      "1": 2.175978864628874,
+      "2": 1.4414457974719994,
+      "4": 0.02334558353854277
+    },
+    "chosen_rotation_degrees": 4,
+    "note": "The manual's four-degree angle description alone did not recover the observed implementation convention."
+  },
+  "lysine_ammonium": {
+    "reference_observations": 90,
+    "fit": "least squares of D-H-A degree residual and 10 times H-A angstrom residual; closest of three staggered H positions",
+    "fitted_DD_D_H_degrees": 111.99843069,
+    "fitted_D_H_angstrom": 1.01386822,
+    "residual_rms_mixed_units": 0.028986022783855658,
+    "chosen_DD_D_H_degrees": 112,
+    "chosen_D_H_angstrom": 1.014,
+    "note": "Empirical calibration constants, not a claim about HBPLUS source constants."
+  },
+  "review": {
+    "model": "gpt-5.6-terra",
+    "checklist": "human-writing skill 18 items",
+    "restatement_flag": "fixed the repeated final caveat; retained local usage warning so standalone instructions remain accurate",
+    "specifics_flag": "verified numerical values against calibration calculations and recorded them here"
+  }
+}

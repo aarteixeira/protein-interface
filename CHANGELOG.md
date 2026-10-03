@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- An independent Rust HBPLUS-format geometry engine, `protein-interface-hbplus`
+  CLI and `protein_interface.hbplus.hbplus_format()` API. Supports the donor
+  overrides and fixed-width output used by ProtonPottsMPNN. Existing
+  distance-only H-bond metrics are unchanged. Exact HBPLUS parity is not claimed;
+  see [validation and limitations](docs/hbplus.md).
+- Analytical geometry, parser and CLI tests, plus reproducible comparisons with
+  the upstream saved bond corpus and EV6 labels.
+
 ### Changed
 
 - Structure parsing for `load_atoms()`, `classify_residues()`, and `from_pdb()`

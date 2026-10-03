@@ -1,0 +1,183 @@
+{
+  "split": "calibration",
+  "selected_pdbs": [
+    "1c57",
+    "1cq2",
+    "1gkt",
+    "1io5",
+    "1iu6",
+    "1l2k",
+    "1lzn",
+    "1ntp",
+    "1vcx",
+    "1wq2",
+    "1xqn",
+    "2dxm",
+    "2efa",
+    "2gve",
+    "2inq",
+    "2mb5",
+    "2r24",
+    "2vs2",
+    "2wyx",
+    "2xqz",
+    "2yz4",
+    "2zoi",
+    "2zpp",
+    "2zwb",
+    "2zye",
+    "3a1r",
+    "3byc",
+    "3cwh",
+    "3fhp",
+    "3hgn",
+    "3ins",
+    "3kcj"
+  ],
+  "inputs": [
+    {
+      "pdb": "1c57",
+      "sha256": "2548723675372f3137d109e37490d34aa51b9fc19e3f9d30ba7c50223a49ffed"
+    },
+    {
+      "pdb": "1cq2",
+      "sha256": "3c8609b4f7f124492c2e619b0b1972446026106e21aa433fb374d277417c5f30"
+    },
+    {
+      "pdb": "1gkt",
+      "sha256": "bd540a3c1af84040f8008d1731ceeb665904bf83b9f8420e8ae33639037957ba"
+    },
+    {
+      "pdb": "1io5",
+      "sha256": "4103280a0760894b92c3b7c3dba9fcf70a5f53e6489d9abcb81b963978598362"
+    },
+    {
+      "pdb": "1iu6",
+      "sha256": "c14ed8fe842bcb64b4824c3ecfeef63ea066d36e4e66261227a5ecc859075243"
+    },
+    {
+      "pdb": "1l2k",
+      "sha256": "e491fd88a2d53f0bec451d04da151799b2c308ffaf1e1fe4847a55b1c909b9cf"
+    },
+    {
+      "pdb": "1lzn",
+      "sha256": "a42966be4d1d48e0d187d6cacfa3b8d664045237106afd2e234471c83fe5b50c"
+    },
+    {
+      "pdb": "1ntp",
+      "sha256": "262732575d1d7fbc602d0dab61b02b8c679c44441035fb497c35ab35b51ca8cc"
+    },
+    {
+      "pdb": "1vcx",
+      "sha256": "14b710a4edc771db065fd5be9d5b870296e0314ab69471d80d6355d098aa38d3"
+    },
+    {
+      "pdb": "1wq2",
+      "sha256": "7328690f597b4f5e22ec57da450337e70664e919a548f1df0147c3c23cdb8be3"
+    },
+    {
+      "pdb": "1xqn",
+      "sha256": "c89b058b0b6da528deccd7b9bc6d379dcd6be3f4240c8bb5e52908a0416293ce"
+    },
+    {
+      "pdb": "2dxm",
+      "sha256": "61334463802a50c1859fc25667afa348c9e885943e9314dd68b15dc05e29f111"
+    },
+    {
+      "pdb": "2efa",
+      "sha256": "c443356353a0af87cf575759894dceb4d1c5280c3aa783262cfb9287d57db7da"
+    },
+    {
+      "pdb": "2gve",
+      "sha256": "6b19d63d55968d0b406ba1634c82d3e7c044f68244080f3565254afe4e51aa68"
+    },
+    {
+      "pdb": "2inq",
+      "sha256": "8a60bbabfe15e6e1d09959414a0c73def739cd7c14d7e8adf1b0e90394527a74"
+    },
+    {
+      "pdb": "2mb5",
+      "sha256": "e50e2ae033b8c0a9795677f16ca37650addb1fa8449dfef265ddaede9e3ff7cc"
+    },
+    {
+      "pdb": "2r24",
+      "sha256": "a54f5af760f0320afe5854403d855598b27ffcb676a97424d9bce517950ae62c"
+    },
+    {
+      "pdb": "2vs2",
+      "sha256": "bd20a432229ebec2987a5d9635b663bdcb890bcff8c63b7ca0b5c67c914ac235"
+    },
+    {
+      "pdb": "2wyx",
+      "sha256": "9acf337898bff83448ccdd680cbd54bb3ecce652f3c72bf6ba6ea868ea080c12"
+    },
+    {
+      "pdb": "2xqz",
+      "sha256": "92d2a7c7e9cc598272ef2f8156a7c39625d111c345823fe5b4b9102b30ca7f4f"
+    },
+    {
+      "pdb": "2yz4",
+      "sha256": "e5ef41149fb0d92848ca14d2b561b8685b64292cac6f75f525d0bd80733a2446"
+    },
+    {
+      "pdb": "2zoi",
+      "sha256": "9ad127f359eeab74d04e344d5887e7935aff26c70a1fc29c1aa763feb58e4ebd"
+    },
+    {
+      "pdb": "2zpp",
+      "sha256": "193c369ee55d9e9179fa6c505e7908b00832c5dd9399a80f706fbbc64daa287a"
+    },
+    {
+      "pdb": "2zwb",
+      "sha256": "757d8aaf6409bf2b1bb2df831a8d1c1bc92cb9b7da3b6e50c204c61f20ab9df9"
+    },
+    {
+      "pdb": "2zye",
+      "sha256": "cc3eb64f321afb351e7ee4a71d622f88d968b85f73000bcb51d82e13711687b0"
+    },
+    {
+      "pdb": "3a1r",
+      "sha256": "0d4768e666a3cb14e3865271a451b1f447ebda4030b77ec314acad062ef0577c"
+    },
+    {
+      "pdb": "3byc",
+      "sha256": "c3d46d4ed4fbb2df3951800b9e6c9016536374830fc132c07541e0888ed33abc"
+    },
+    {
+      "pdb": "3cwh",
+      "sha256": "351b2fcba4ba72c01e0b9634d8019a427447b0fce79571f3f155d33c6b3dbac0"
+    },
+    {
+      "pdb": "3fhp",
+      "sha256": "cf8536c27a87a50349b0156f82af485a6b44179c3bdc69dbc865775514db1d41"
+    },
+    {
+      "pdb": "3hgn",
+      "sha256": "499a3aa1a4e1e0823537643ed48ad4f72355ad7f69a7e56c06a7353b2ed1b206"
+    },
+    {
+      "pdb": "3ins",
+      "sha256": "d10d925d560596590a4db4546380cf3e9c17f0d5c371d80785b4ba12a486ef8b"
+    },
+    {
+      "pdb": "3kcj",
+      "sha256": "641fd556c97ad9d086fc4b7c97994a99bb8b9f87335b89b0cf539cf483627e3a"
+    }
+  ],
+  "reference_sha256": "2889fb9e923159825a0733e1b0083c6a211f1ac5940d3618ce4908971ffd0a22",
+  "binary_sha256": "93120ceaf398bd44ada3550e0cd6127d2d74df71c2aa2879b9a05685153ae00c",
+  "errors": 2,
+  "totals": {
+    "reference_bonds": 3589,
+    "actual_bonds": 3589,
+    "common_bonds": 3589,
+    "missing": 0,
+    "extra": 0,
+    "geometry_mismatch": 0,
+    "exact_geometry": 3582
+  },
+  "scope": "Only stored His/Asp/Glu incident bonds; all-bond parity untested",
+  "coordinate_equivalence": "Inspect common-bond D-A differences; original labeller input hashes are unavailable",
+  "exact_parity": false,
+  "stored_contact_parity": false
+}

@@ -2,11 +2,12 @@
 name = "protein-interface"
 version = "0.1.3"
 edition = "2021"
+rust-version = "1.82"
 
 [lib]
 name = "_core"
-crate-type = ["cdylib"]
-test = false
+crate-type = ["cdylib", "rlib"]
+test = true
 
 [features]
 extension-module = ["pyo3/extension-module"]

@@ -18,6 +18,7 @@ openmm = ["openmm>=8"]
 residues = ["scipy>=1.10", "pandas>=2.0", "openpyxl>=3.1"]
 
 [project.scripts]
+protein-interface-hbplus = "protein_interface.hbplus:main"
 protein-interface-residues = "protein_interface.residue_classifier:main"
 
 [tool.maturin]

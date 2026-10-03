@@ -1,0 +1,33 @@
+{
+  "date_utc": "2026-10-03",
+  "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "binary_sha256": "de5eecf3f718b67cf6184222fb80862cc2ad050a4a589619a9f178550d436132",
+  "source_sha256": {
+    "Cargo.lock": "37f586c05771ceb7158c6d9e955f65569e43664eca295aabe688d87ed82e3ff7",
+    "Cargo.toml": "2b9bfeacb2bf5bdcc9b45081bf681e7c3df6b7e564f8f99b3778a9b02c4001d0",
+    "src/bin/protein-interface-hbplus.rs": "8247e005cab71f15101b9ea5e0df757df8e4aaa8138359f6a07f5d73b6bccd26",
+    "src/hbplus/chemistry.rs": "f9da9616dabab19109bd12126a58f83c7b7cee7a82fcb940faf753ae08c98124",
+    "src/hbplus/cli.rs": "5eec44fa5db669b1cbb3ddc712e16da9d1fd7efdc8a401da1eed059df8d04e95",
+    "src/hbplus/geometry.rs": "049f9fc92d660e84c0ef7ba2e64bb1752fd806a060415fada627778dd0134f31",
+    "src/hbplus/mod.rs": "03c1014dee0c83823db1dfbc39e3e16ef557fcf7cc85f2012eaaaaa7ce87b4e3",
+    "src/hbplus/pdb.rs": "5673118c2dcb635e7f6192fbf24ef4eadccb664df1b2d1578460a9f10ed5992d",
+    "src/lib.rs": "96016adbe32fef828fad29720db777e0ea2026fd366b045410f222d4ca7a8eab"
+  },
+  "tests": {
+    "rust_passed": 19,
+    "python_full_passed": 176,
+    "python_full_skipped": 19,
+    "python_final_hbplus_passed": 11
+  },
+  "slurm_cpu_jobs": {
+    "rust_final": 44774,
+    "python_full": 44772,
+    "python_hbplus_final": 44775,
+    "reference_final": 44776,
+    "ev6_final": 44777
+  },
+  "final_source_change": "Recognize unpadded TER records; covered by a new parser regression test.",
+  "reference_rerun": "Final per-structure contact CSV and discrepancy JSON are byte-identical to the frozen held-out evaluation.",
+  "ev6_rerun": "Final executable again preserves all 7257 labels; protocol records coordinates, models, upstream code and environment versions.",
+  "scope": "No full HBPLUS equivalence or biological validation is implied."
+}
