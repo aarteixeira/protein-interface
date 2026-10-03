@@ -39,5 +39,5 @@ jobs:
 
       - name: Run Rust geometry and spatial tests
         env:
-          PYO3_PYTHON: .venv/bin/python
+          PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
         run: cargo test --locked
