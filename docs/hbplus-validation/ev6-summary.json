@@ -1,0 +1,18 @@
+{
+  "structures": 180,
+  "sites": 7257,
+  "token_changes": 0,
+  "max_probability_delta": 0.008070378081192646,
+  "mean_probability_delta": 2.391516111454191e-06,
+  "thresholds": {
+    "his": {
+      "sd_cut": 0.2,
+      "thr": 0.3
+    },
+    "acid": {
+      "sd_cut": 0.3,
+      "thr": 0.06
+    }
+  },
+  "limitation": "Same released EV6 classifiers in both arms; this tests substitution effects, not biological accuracy"
+}

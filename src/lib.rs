@@ -6,6 +6,7 @@ use sc_rs::sc::{types::Atom, vector3::Vec3, ScCalculator};
 
 mod contacts;
 mod hbonds;
+pub mod hbplus;
 mod salt_bridges;
 mod sasa;
 
@@ -441,8 +442,53 @@ fn compute_sc_batch(
     results.map_err(|(i, e)| PyValueError::new_err(format!("complex {}: {}", i, e)))
 }
 
+/// Return eight-header-line .hb2 text using the independent geometry engine.
+/// This is an experimental compatibility API, not certified HBPLUS parity.
+#[pyfunction]
+#[pyo3(signature = (pdb_text, max_da=3.9, max_ha=2.5, min_angle=90.0, donor_overrides=Vec::new(), acceptor_overrides=Vec::new(), use_hydrogens=false))]
+#[allow(clippy::too_many_arguments, clippy::useless_conversion)] // Public keyword API; PyO3 0.22 macro conversion.
+fn hbplus_format(
+    py: Python<'_>,
+    pdb_text: String,
+    max_da: f64,
+    max_ha: f64,
+    min_angle: f64,
+    donor_overrides: Vec<(String, String, usize)>,
+    acceptor_overrides: Vec<(String, String, usize)>,
+    use_hydrogens: bool,
+) -> PyResult<String> {
+    let options = hbplus::Options {
+        max_da,
+        max_ha,
+        min_dha: min_angle,
+        min_haa: min_angle,
+        min_daa: min_angle,
+        use_hydrogens,
+        donors: donor_overrides
+            .into_iter()
+            .map(|(r, a, n)| ((r, a.trim().to_string()), n))
+            .collect(),
+        acceptors: acceptor_overrides
+            .into_iter()
+            .map(|(r, a, n)| ((r, a.trim().to_string()), n))
+            .collect(),
+        ..Default::default()
+    };
+    py.allow_threads(|| hbplus::from_pdb(&pdb_text, &options))
+        .map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+#[allow(clippy::useless_conversion)] // Emitted by the PyO3 0.22 macro.
+fn hbplus_cli(py: Python<'_>, args: Vec<String>) -> PyResult<()> {
+    py.allow_threads(|| hbplus::cli::run(&args))
+        .map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(hbplus_format, m)?)?;
+    m.add_function(wrap_pyfunction!(hbplus_cli, m)?)?;
     m.add_class::<ScResult>()?;
     m.add_function(wrap_pyfunction!(compute_sc, m)?)?;
     m.add_function(wrap_pyfunction!(compute_sasa, m)?)?;

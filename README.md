@@ -49,6 +49,12 @@ and salt-bridge counting from 137.8 ms to 5.7 ms, with identical values. See
 
 ## Install
 
+An opt-in Rust executable, `protein-interface-hbplus`, adds hydrogen placement
+and angle-based bond records compatible with ProtonPottsMPNN's EV6 reader.
+It preserved all 7,257 EV6 labels in a 180-structure held-out comparison, with
+five distinct contact disagreements remaining. It is **not an exact HBPLUS
+replacement**. See [scope, commands and validation](docs/hbplus.md).
+
 From a source checkout:
 
 ```bash
